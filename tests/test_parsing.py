@@ -81,3 +81,43 @@ def test_dtc_payload_legacy_padded():
 def test_describe():
     assert "SKIM" in describe("P0513")
     assert "Manufacturer" in describe("P1999")
+
+
+class FakeSerial:
+    """Answers with a prompt only at one baud rate."""
+
+    def __init__(self, live_rate):
+        self.live_rate = live_rate
+        self.baudrate = 0
+        self._buf = b""
+
+    @property
+    def in_waiting(self):
+        return len(self._buf)
+
+    def reset_input_buffer(self):
+        self._buf = b""
+
+    def write(self, data):
+        self._buf = b"\r>" if self.baudrate == self.live_rate else b"\x00\xff"
+
+    def flush(self):
+        pass
+
+    def read(self, n):
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+
+def test_detect_baud_finds_live_rate():
+    from wrangler_obd.transport import detect_baud
+
+    ser = FakeSerial(38400)
+    assert detect_baud(ser, probe_timeout=0.01) == 38400
+    assert ser.baudrate == 38400
+
+
+def test_detect_baud_none_when_silent():
+    from wrangler_obd.transport import detect_baud
+
+    assert detect_baud(FakeSerial(1), rates=(9600, 115200), probe_timeout=0.01) is None

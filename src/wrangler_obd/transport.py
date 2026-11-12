@@ -25,18 +25,52 @@ class Transport(Protocol):
     def close(self) -> None: ...
 
 
-class SerialTransport:
-    """USB or Bluetooth (rfcomm / COM port) ELM327 adapter."""
+#: Rates tried by auto-detection, most common first. OBDLink adapters default to
+#: 115200, most ELM327 clones to 38400.
+BAUD_RATES = (115200, 38400, 9600, 230400, 57600, 500000)
 
-    def __init__(self, port: str, baudrate: int = 38400) -> None:
+
+def detect_baud(ser, rates=BAUD_RATES, probe_timeout: float = 0.5) -> int | None:
+    """Find the rate at which the adapter answers with a prompt. Leaves ``ser`` set to it."""
+    for rate in rates:
+        ser.baudrate = rate
+        ser.reset_input_buffer()
+        # Two DEL bytes abort any half-sent command; the ELM327 answers CR with a prompt.
+        ser.write(b"\x7f\x7f\r")
+        ser.flush()
+        buf = bytearray()
+        deadline = time.monotonic() + probe_timeout
+        while time.monotonic() < deadline:
+            buf.extend(ser.read(ser.in_waiting or 1))
+            if PROMPT in buf:
+                return rate
+    return None
+
+
+class SerialTransport:
+    """USB or Bluetooth (rfcomm / COM port) ELM327 adapter.
+
+    ``baudrate=None`` auto-detects the adapter's rate.
+    """
+
+    def __init__(self, port: str, baudrate: int | None = None) -> None:
         try:
             import serial  # pyserial
         except ImportError as exc:  # pragma: no cover - depends on environment
             raise TransportError("pyserial is required for serial adapters: pip install pyserial") from exc
         try:
-            self._ser = serial.Serial(port, baudrate=baudrate, timeout=0.1)
+            self._ser = serial.Serial(port, baudrate=baudrate or BAUD_RATES[0], timeout=0.1)
         except serial.SerialException as exc:
             raise TransportError(f"cannot open {port}: {exc}") from exc
+        if baudrate is None:
+            found = detect_baud(self._ser)
+            if found is None:
+                self._ser.close()
+                raise TransportError(
+                    f"no ELM327 answered on {port} at {', '.join(map(str, BAUD_RATES))} baud; "
+                    "check the adapter is plugged in and the key is on"
+                )
+        self.baudrate = self._ser.baudrate
 
     def write(self, data: bytes) -> None:
         self._ser.reset_input_buffer()

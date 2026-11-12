@@ -17,7 +17,7 @@ The OBD port is under the dash, left of the steering column.
 pip install -e .            # or: pip install -e .[dev] for tests
 ```
 
-Requires Python 3.10+ and `pyserial`.
+Requires Python 3.10+ and `pyserial`. The serial baud rate is auto-detected; pass `--baud` to force one.
 
 ## Usage
 

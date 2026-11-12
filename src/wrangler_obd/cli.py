@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wrangler-obd", description="OBD-II monitor for the 2010 Jeep Wrangler JK")
     conn = parser.add_argument_group("adapter")
     conn.add_argument("--port", help="serial port of a USB/Bluetooth ELM327, e.g. /dev/ttyUSB0 or COM3")
-    conn.add_argument("--baud", type=int, default=38400, help="serial baud rate (default 38400)")
+    conn.add_argument("--baud", type=int, help="serial baud rate (default: auto-detect)")
     conn.add_argument("--tcp", help="Wi-Fi ELM327 host[:port], e.g. 192.168.0.10:35000")
     conn.add_argument("--sim", action="store_true", help="use the built-in simulator instead of a real adapter")
     conn.add_argument("--timeout", type=float, default=5.0, help="seconds to wait for each reply")
