@@ -11,6 +11,19 @@ ISO 15765-4 CAN (11-bit, 500 kbaud), which the tool detects automatically.
 
 The OBD port is under the dash, left of the steering column.
 
+## The easy way: the app
+
+Double-click **`Wrangler Diagnostics.pyw`** in this folder. It opens in your web browser
+with one button per step (connect, pedal map, record a drive, idle checks, transmission
+temperature, make a ZIP to send), a progress bar and a Stop button. No typing needed.
+Results are saved in `Documents\jeep-data`. If Windows asks which program to open the
+`.pyw` file with, double-click `Wrangler Diagnostics.bat` instead. To put it on the desktop,
+right-click the `.pyw` file and choose Send to > Desktop (create shortcut).
+
+The app runs only on this computer (it is a small local web server, nothing is sent
+anywhere) and closes by itself a couple of minutes after its browser tab is closed. The
+first time, run `pip install -e .` in this folder once so `pyserial` is installed.
+
 ## Install
 
 ```bash
@@ -176,6 +189,7 @@ print(elm.read_dtcs())
 - `extras.py`: Chrysler-specific readings to try (from the OBDb signal set)
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve
+- `app.py`, `app.html`: the point-and-click app (local web page)
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings
 - `report.py`: diagnostic report (JSON + Markdown) and log statistics
 - `simulator.py`: fake ELM327 + JK PCM that speaks the real text protocol

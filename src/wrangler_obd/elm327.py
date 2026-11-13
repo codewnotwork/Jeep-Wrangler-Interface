@@ -44,6 +44,10 @@ class ElmError(RuntimeError):
     """The adapter or vehicle reported an error."""
 
 
+class Cancelled(KeyboardInterrupt):
+    """Raised by ``Elm327.command`` after ``stop()``, so long jobs end the same way Ctrl+C ends them."""
+
+
 @dataclass
 class Reading:
     pid: Pid
@@ -118,14 +122,22 @@ class Elm327:
         self.version = ""
         self.protocol = ""
         self._supported: set[int] | None = None
+        self._stop_requested = False
         #: When True, PID reads tell the adapter to stop waiting after one
         #: reply instead of waiting out its timeout, which is much faster.
         self.fast = False
 
     # -- low level -------------------------------------------------------
 
+    def stop(self) -> None:
+        """Ask a running job to stop: the next command raises ``Cancelled`` (once)."""
+        self._stop_requested = True
+
     def command(self, cmd: str, timeout: float | None = None) -> str:
         """Send one command and return the raw text before the prompt."""
+        if self._stop_requested:
+            self._stop_requested = False
+            raise Cancelled()
         self.transport.write((cmd + "\r").encode("ascii"))
         raw = self.transport.read_until_prompt(timeout or self.timeout)
         text = raw.decode("ascii", errors="replace")

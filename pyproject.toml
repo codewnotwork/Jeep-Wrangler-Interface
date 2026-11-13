@@ -16,8 +16,14 @@ dev = ["pytest>=7"]
 [project.scripts]
 wrangler-obd = "wrangler_obd.cli:main"
 
+[project.gui-scripts]
+wrangler-app = "wrangler_obd.app:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+wrangler_obd = ["app.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
