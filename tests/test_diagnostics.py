@@ -244,3 +244,36 @@ def test_cli_scan_and_pedal(tmp_path, capsys):
     assert main(["--sim", "pedal", "--out", str(tmp_path / "p"), "--duration", "0.3"]) == 0
     assert (tmp_path / "p" / "pedal-map.md").exists()
     assert "Saved pedal-map.md" in capsys.readouterr().out
+
+
+def test_fuel_economy():
+    from wrangler_obd import economy
+
+    idle = {"rpm": 700.0, "map": 33.0, "intake_temp": 25.0, "speed": 0.0}
+    # 700 rpm at 33 kPa works out to about 0.6 gallons per hour with the assumed 80% cylinder filling.
+    assert economy.fuel_flow_lph(idle) / economy.L_PER_GALLON == pytest.approx(0.615, abs=0.01)
+    assert economy.fuel_flow_lph({"rpm": 700.0}) is None
+    assert economy.air_flow_gps({"maf": 12.5, "rpm": 2000.0}) == 12.5
+    assert economy.tire_speed_factor(33, 32) == pytest.approx(1.03125)
+
+    cruise = {"rpm": 2000.0, "map": 55.0, "intake_temp": 25.0, "speed": 96.56}  # 60 mph
+    samples = [(float(t), idle) for t in range(0, 60)] + [(float(t), cruise) for t in range(60, 661)]
+    e = economy.summarize(samples)
+    assert e["distance_miles"] == pytest.approx(10.0, abs=0.05)
+    assert 17 < e["by_speed"]["over 55 mph"]["mpg"] < 24  # plausible for a JK at 60 mph
+    assert e["by_speed"]["stopped"]["mpg"] is None and e["by_speed"]["stopped"]["share_of_time_pct"] == 9.1
+    assert e["mpg"] < e["by_speed"]["over 55 mph"]["mpg"]
+    bigger = economy.summarize(samples, speed_factor=1.03125)
+    assert bigger["mpg"] == pytest.approx(e["mpg"] * 1.03125, rel=0.01)
+    thirsty = economy.summarize(samples, fuel_factor=1.1)
+    assert thirsty["fuel_gallons"] == pytest.approx(e["fuel_gallons"] * 1.1, rel=0.01)
+    assert economy.summarize([(0.0, {"rpm": 700.0})]) is None
+    assert "mpg" in "\n".join(economy.to_markdown(e))
+
+
+def test_cli_report_fuel_economy(tmp_path):
+    out = tmp_path / "r"
+    assert main(["--sim", "report", "--out", str(out), "--duration", "0.2", "--tire", "33", "--tire-calibrated", "32"]) == 0
+    data = json.loads((out / "report.json").read_text(encoding="utf-8"))
+    assert data["fuel_economy"]["speed_factor"] == 1.0312
+    assert "## Fuel economy (estimate)" in (out / "report.md").read_text(encoding="utf-8")

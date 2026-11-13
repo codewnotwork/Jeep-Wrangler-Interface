@@ -110,6 +110,7 @@ def build_report(
     log_file: str | None = None,
     notes: str = "",
     idle_check: dict | None = None,
+    fuel_economy: dict | None = None,
 ) -> dict:
     """Query the vehicle and assemble the report dictionary."""
     status = elm.monitor_status() or {}
@@ -168,6 +169,8 @@ def build_report(
         "onboard_tests": [t.as_dict() for t in tests],
         "findings": findings,
     }
+    if fuel_economy is not None:
+        report["fuel_economy"] = fuel_economy
     if idle_check is not None:
         report["idle_check"] = {"file": log_file, **idle_check}
     if log_summary is not None:
@@ -217,6 +220,11 @@ def to_markdown(report: dict) -> str:
         from . import idle
 
         out += [""] + idle.to_markdown(report["idle_check"])
+
+    if report.get("fuel_economy"):
+        from . import economy
+
+        out += [""] + economy.to_markdown(report["fuel_economy"])
 
     mil = report["check_engine_light_on"]
     out += ["", "## Trouble codes", "", f"Check engine light: {'unknown' if mil is None else 'ON' if mil else 'off'}", ""]

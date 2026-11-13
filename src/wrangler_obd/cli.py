@@ -8,7 +8,7 @@ import os
 import sys
 import time
 
-from . import alerts, idle as idle_mod, pedal as pedal_mod, report as report_mod, scan as scan_mod
+from . import alerts, economy, idle as idle_mod, pedal as pedal_mod, report as report_mod, scan as scan_mod
 from . import dtc as dtc_mod
 from .elm327 import Elm327, ElmError
 from .logger import CsvLogger, record
@@ -146,25 +146,37 @@ def cmd_tests(elm: Elm327, args: argparse.Namespace) -> None:
 
 def cmd_report(elm: Elm327, args: argparse.Namespace) -> None:
     os.makedirs(args.out, exist_ok=True)
-    summary, log_name = None, None
+    summary, log_name, mpg = None, None, None
+    speed_factor = args.speed_factor or (
+        economy.tire_speed_factor(args.tire, args.tire_calibrated) if args.tire and args.tire_calibrated else 1.0
+    )
     if args.duration:
         log_name = "log.csv"
         supported = elm.supported_pids()
         keys = [k for k in PIDS if PIDS[k].pid in supported and k not in report_mod.SLOW_PIDS]
         samples: list[dict[str, float]] = []
+        timed: list[tuple[float, dict[str, float]]] = []
+
+        def keep(values: dict[str, float]) -> None:
+            samples.append(values)
+            timed.append((time.monotonic() - start, values))
+
         print(f"Recording {len(keys)} PIDs for {args.duration:.0f}s. Ctrl+C to stop early.")
         start = time.monotonic()
         with open(os.path.join(args.out, log_name), "w", newline="", encoding="utf-8") as fh:
             try:
-                record(elm, CsvLogger(fh, keys), interval=args.interval, duration=args.duration, on_sample=samples.append)
+                record(elm, CsvLogger(fh, keys), interval=args.interval, duration=args.duration, on_sample=keep)
             except KeyboardInterrupt:
                 pass
         summary = report_mod.summarize_log(samples, time.monotonic() - start)
-    data = report_mod.build_report(elm, summary, log_name, notes=args.notes or "")
+        mpg = economy.summarize(timed, speed_factor, args.fuel_factor)
+    data = report_mod.build_report(elm, summary, log_name, notes=args.notes or "", fuel_economy=mpg)
     for name, text in (("report.json", report_mod.to_json(data)), ("report.md", report_mod.to_markdown(data))):
         with open(os.path.join(args.out, name), "w", encoding="utf-8") as fh:
             fh.write(text)
     print(f"Saved report.md and report.json" + (" and log.csv" if log_name else "") + f" in {args.out}")
+    if mpg and mpg["mpg"]:
+        print(f"  Estimated {mpg['mpg']} mpg over {mpg['distance_miles']} miles.")
     for f in data["findings"]:
         print(f"  {f['severity']}: {f['message']}")
 
@@ -318,6 +330,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, help="also record live data for this many seconds and summarize it")
     p.add_argument("--interval", type=float, default=0.0, help="seconds between samples (default: as fast as possible)")
     p.add_argument("--notes", help="symptoms or context to include, e.g. 'rough idle when cold'")
+    p.add_argument("--tire", type=float, help="actual tire diameter in inches, e.g. 33")
+    p.add_argument("--tire-calibrated", type=float, help="tire diameter the truck's computer is set up for, in inches")
+    p.add_argument("--speed-factor", type=float,
+                   help="true speed divided by the speed the truck reports (from a GPS check); overrides --tire")
+    p.add_argument("--fuel-factor", type=float, default=1.0,
+                   help="gallons at the pump divided by gallons this tool estimated, from a fill-up check")
     p = sub.add_parser("idle", help="idle check: find small RPM stumbles and which cylinder or bank is behind them")
     p.add_argument("--out", required=True, help="folder to write idle-report.md, idle-report.json and idle-log.csv into")
     p.add_argument("--duration", type=float, default=180, help="seconds to sample (default 180)")

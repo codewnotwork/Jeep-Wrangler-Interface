@@ -70,6 +70,26 @@ drive at a steady speed for a few minutes. Report numbers are always metric.
 `live` and `report` flag hot coolant, low or high system voltage and fuel trims that are
 far from zero. Thresholds are in `alerts.py`.
 
+### Fuel economy
+
+Any `report` run with `--duration` includes an estimated mpg for the drive, split by speed
+(stopped, under 30, 30 to 55, over 55 mph) with the share of fuel burned in each.
+
+```bash
+wrangler-obd --port COM3 report --out commute --duration 1800 --speed-factor 1.03
+```
+
+The 3.8L has no air flow sensor, so fuel use is worked out from manifold pressure, RPM
+and intake temperature. Treat the absolute number as approximate until you calibrate it;
+comparisons between drives are sound from the start. Two corrections:
+
+- **Speed.** If the tires are a different size than the computer is set up for, the
+  reported speed and distance are off. Hold a steady 60 mph on the speedometer, read a
+  phone GPS, and pass `--speed-factor` as GPS speed divided by 60. Or pass
+  `--tire 33 --tire-calibrated 32` with both diameters in inches.
+- **Fuel.** Fill the tank, log every drive, fill again, then pass `--fuel-factor` as the
+  gallons the pump shows divided by the gallons the reports added up to.
+
 ### Idle check
 
 ```bash
@@ -145,6 +165,7 @@ print(elm.read_dtcs())
 - `dtc.py`: trouble code decoding and descriptions (generic + common JK codes)
 - `mode06.py`: on-board test result decoding (monitor names, unit scaling)
 - `idle.py`: idle check (RPM dip detection, misfire counter change)
+- `economy.py`: fuel use and mpg estimate from MAP, RPM and intake temperature
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings

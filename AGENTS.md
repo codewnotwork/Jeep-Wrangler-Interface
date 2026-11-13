@@ -85,6 +85,18 @@ pedal-to-throttle curve. Record it stock, and again with any change, and compare
 Changing the curve itself needs either that kind of inline hardware or a PCM tune written
 with a dedicated flash tool, both outside this project.
 
+## Playbook: fuel economy
+
+The owner's main goal is better fuel economy. `report --duration` gives an estimated mpg
+split by speed band. Before comparing anything:
+
+1. Set `--speed-factor` from a GPS check at a steady 60 mph (the truck is on 33" tires and
+   the computer may be set up for a smaller size).
+2. Set `--fuel-factor` from one tank: pump gallons divided by the sum of estimated gallons.
+3. Compare like with like: same route, warm engine, similar weather. Look at the share of
+   fuel burned while stopped, fuel trims, coolant temperature reaching 90 °C (a thermostat
+   stuck open costs mileage), and upstream O2 sensor switching.
+
 ## Code layout
 
 See "Layout" in `README.md`. Tests: `pip install -e .[dev]` then `pytest -q`. Every feature
