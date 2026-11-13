@@ -63,7 +63,7 @@ def capture(
         start = clock()
         while clock() - start < duration:
             t = clock() - start
-            wanted = keys if len(samples) % SLOW_EVERY == 0 else [k for k in keys if k in FAST_PIDS]
+            wanted = keys if len(samples) % SLOW_EVERY == 0 else [k for k in keys if k not in SLOW_PIDS]
             values = {k: r.value for k, r in elm.read_pids(wanted).items()}
             samples.append((t, values))
             if logger:

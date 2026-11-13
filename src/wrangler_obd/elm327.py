@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from . import dtc as dtc_mod
@@ -31,6 +32,12 @@ PROTOCOLS = {
     "9": "ISO 15765-4 CAN (29 bit, 250 kbaud)",
     "A": "SAE J1939 CAN",
 }
+
+
+#: CAN addresses (11-bit). Requests to BROADCAST reach every emissions module.
+BROADCAST = 0x7DF
+ENGINE = 0x7E0
+TRANSMISSION = 0x7E1
 
 
 class ElmError(RuntimeError):
@@ -281,6 +288,43 @@ class Elm327:
         """Mode 04: clear codes, freeze frame and readiness monitors. Engine off, key on."""
         if not self._service_response("04", timeout=max(self.timeout, 10.0)):
             raise ElmError("vehicle did not confirm the clear")
+
+    # -- Manufacturer data (services 0x21 and 0x22) ----------------------
+
+    @contextmanager
+    def ecu(self, address: int):
+        """Talk to one module directly, e.g. ``ENGINE`` or ``TRANSMISSION``.
+
+        Normal OBD requests are broadcast to every emissions module. The
+        manufacturer's own data has to be asked of one module by address.
+        The broadcast address is restored afterwards.
+        """
+        reply = self.command(f"ATSH{address:03X}")
+        if "OK" not in reply:
+            raise ElmError(f"adapter rejected the module address: {reply!r}")
+        try:
+            yield
+        finally:
+            self.command(f"ATSH{BROADCAST:03X}")
+
+    def read_data(self, service: int, ident: int) -> list[int] | None:
+        """Read one manufacturer data item from the module selected with ``ecu``.
+
+        ``service`` is 0x21 (one-byte identifier) or 0x22 (two-byte
+        identifier). Both only read; neither changes anything in the module.
+        Returns the data bytes, or None if the module does not have the item.
+        """
+        if service == 0x21:
+            request, skip = f"21{ident:02X}", 2
+        elif service == 0x22:
+            request, skip = f"22{ident:04X}", 3
+        else:
+            raise ValueError("service must be 0x21 or 0x22")
+        want = list(bytes.fromhex(request[2:]))
+        for m in self.query(request + ("1" if self.fast else "")):
+            if m and m[0] == service + 0x40 and m[1:skip] == want:
+                return m[skip:]
+        return None
 
     # -- Mode 09 ---------------------------------------------------------
 

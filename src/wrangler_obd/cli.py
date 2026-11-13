@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
 
-from . import alerts, idle as idle_mod, report as report_mod
+from . import alerts, idle as idle_mod, pedal as pedal_mod, report as report_mod, scan as scan_mod
 from . import dtc as dtc_mod
 from .elm327 import Elm327, ElmError
 from .logger import CsvLogger, record
@@ -192,6 +193,64 @@ def cmd_idle(elm: Elm327, args: argparse.Namespace) -> None:
         print(f"  - {note}")
 
 
+def _hex(text: str) -> int:
+    return int(text, 16)
+
+
+def cmd_scan(elm: Elm327, args: argparse.Namespace) -> None:
+    if args.service == "both":
+        ranges = [(0x21, 0x00, 0xFF), (0x22, args.start, args.end)]
+    elif args.service == "21":
+        ranges = [(0x21, max(0, min(args.start, 0xFF)), min(args.end, 0xFF))]
+    else:
+        ranges = [(0x22, args.start, args.end)]
+    status = elm.read_pids(["rpm", "speed"])
+    if not args.sim and (status.get("rpm") and status["rpm"].value > 0 or status.get("speed") and status["speed"].value > 0):
+        raise SystemExit("Scan only with the engine off: park, key on, engine off, then run it again.")
+    total = sum(b - a + 1 for _, a, b in ranges)
+    print(f"Asking the {args.module} module for {total} identifiers (read-only). Ctrl+C stops and keeps what was found.")
+    started = time.monotonic()
+
+    def progress(done: int, of: int, found: int) -> None:
+        rate = done / max(time.monotonic() - started, 0.001)
+        print(f"\r  {done}/{of} in this range, {found} answered, {rate:.0f} per second   ", end="", flush=True)
+
+    result = scan_mod.run(elm, args.module, ranges, label=args.label or "", progress=progress)
+    print()
+    with open(args.out, "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+        fh.write("\n")
+    state = "" if result["complete"] else " (stopped early)"
+    print(f"Saved {len(result['items'])} item(s) to {args.out}{state}")
+    if args.compare:
+        changed = scan_mod.compare(scan_mod.load(args.compare), result)
+        print(f"{len(changed)} item(s) differ from {args.compare}:")
+        for row in changed:
+            numbers = f"   ({row['before_number']} -> {row['after_number']})" if "before_number" in row else ""
+            print(f"  {row['item']}  {row['before']} -> {row['after']}{numbers}")
+
+
+def cmd_pedal(elm: Elm327, args: argparse.Namespace) -> None:
+    os.makedirs(args.out, exist_ok=True)
+    supported = elm.supported_pids()
+    keys = [k for k in pedal_mod.PEDAL_PIDS if PIDS[k].pid in supported]
+    print("Pedal map. Parked, key on, engine off: press the pedal slowly to the floor over about")
+    print(f"10 seconds, release it slowly, and repeat until the {args.duration:.0f}s are up.")
+    with open(os.path.join(args.out, "pedal-log.csv"), "w", newline="", encoding="utf-8") as fh:
+        try:
+            samples = idle_mod.capture(elm, args.duration, CsvLogger(fh, keys), keys)
+        except KeyboardInterrupt:
+            samples = []
+    result = pedal_mod.pedal_map([v for _, v in samples])
+    with open(os.path.join(args.out, "pedal-map.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2)
+        fh.write("\n")
+    with open(os.path.join(args.out, "pedal-map.md"), "w", encoding="utf-8") as fh:
+        fh.write(pedal_mod.to_markdown(result, args.notes or ""))
+    print(f"Saved pedal-map.md, pedal-map.json and pedal-log.csv in {args.out}")
+    print(result.get("note") or f"  {len(result['curve'])} rows in the pedal-to-throttle table.")
+
+
 def cmd_ports() -> int:
     try:
         from serial.tools import list_ports
@@ -263,6 +322,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, help="folder to write idle-report.md, idle-report.json and idle-log.csv into")
     p.add_argument("--duration", type=float, default=180, help="seconds to sample (default 180)")
     p.add_argument("--notes", help="conditions for this run, e.g. 'in Drive, A/C on'")
+    p = sub.add_parser("scan", help="find manufacturer data (e.g. transmission temperature) by asking a module for every item")
+    p.add_argument("--out", required=True, help="JSON file to write")
+    p.add_argument("--module", choices=sorted(scan_mod.MODULES), default="trans", help="module to ask (default: trans)")
+    p.add_argument("--service", choices=["21", "22", "both"], default="21",
+                   help="21 = 256 items, about a minute; 22 = up to 65536 items, can take an hour (default: 21)")
+    p.add_argument("--start", type=_hex, default=0x0000, help="first identifier, hex (default 0000)")
+    p.add_argument("--end", type=_hex, default=0xFFFF, help="last identifier, hex (default FFFF)")
+    p.add_argument("--label", help="conditions, e.g. 'cold, sat overnight' or 'hot, after 30 min drive'")
+    p.add_argument("--compare", help="an earlier scan file; print the items that changed since then")
+    p = sub.add_parser("pedal", help="record how far the throttle opens for each pedal position")
+    p.add_argument("--out", required=True, help="folder to write pedal-map.md, pedal-map.json and pedal-log.csv into")
+    p.add_argument("--duration", type=float, default=45, help="seconds to sample (default 45)")
+    p.add_argument("--notes", help="conditions, e.g. 'stock' or 'throttle controller on Sport'")
     sub.add_parser("ports", help="list serial (COM) ports to find the adapter")
     p = sub.add_parser("clear", help="clear trouble codes and turn off the check engine light")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -275,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    "freeze": cmd_freeze, "readiness": cmd_readiness, "tests": cmd_tests, "report": cmd_report, "idle": cmd_idle,
+    "freeze": cmd_freeze, "readiness": cmd_readiness, "tests": cmd_tests, "report": cmd_report, "idle": cmd_idle, "scan": cmd_scan, "pedal": cmd_pedal,
     "info": cmd_info, "pids": cmd_pids, "live": cmd_live, "dtc": cmd_dtc, "clear": cmd_clear, "log": cmd_log,
 }
 

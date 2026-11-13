@@ -183,3 +183,64 @@ def test_cli_idle(tmp_path, capsys):
     assert data["idle_check"]["file"] == "idle-log.csv" and data["idle_check"]["samples"] > 5
     md = (tmp_path / "idle-report.md").read_text(encoding="utf-8")
     assert "## Idle check" in md and "stereo off" in md
+
+
+def test_read_manufacturer_data_and_restore_broadcast(elm):
+    from wrangler_obd.elm327 import TRANSMISSION
+
+    with elm.ecu(TRANSMISSION):
+        assert elm.transport.header == 0x7E1
+        assert elm.read_data(0x21, 0x30) == [58]  # 20 °C * 0.9 + 40
+        assert elm.read_data(0x22, 0x1234) == [0x00, 0xB4]
+        assert elm.read_data(0x22, 0x9999) is None  # negative response
+    assert elm.transport.header == 0x7DF
+    assert elm.read_pid("rpm") is not None
+    with pytest.raises(ValueError):
+        elm.read_data(0x2F, 1)
+
+
+def test_scan_and_compare(elm, clock):
+    from wrangler_obd import scan
+
+    ranges = [(0x21, 0x00, 0xFF), (0x22, 0x1200, 0x12FF)]
+    cold = scan.run(elm, "trans", ranges, label="cold")
+    assert cold["items"] == {"21:30": "3A", "21:31": "03", "22:1234": "00B4"}
+    assert cold["complete"] and cold["engine_readings_at_start"]["coolant_temp"] == 20
+    assert elm.fast is False and elm.transport.header == 0x7DF
+    clock.t = 200
+    hot = scan.run(elm, "trans", ranges, label="hot")
+    changed = scan.compare(cold, hot)
+    assert [c["item"] for c in changed] == ["21:30", "22:1234"]  # the gear number did not change
+    assert changed[0]["before_number"] == 58 and changed[0]["after_number"] == 126
+    assert scan.run(elm, "engine", [(0x21, 0x00, 0x20)])["items"] == {"21:10": "55AA"}
+
+
+def test_pedal_map():
+    from wrangler_obd import pedal
+
+    # Pedal sensor 15..80%, throttle opens with the square of travel.
+    samples = []
+    for i in range(101):
+        travel = i / 100
+        samples.append({"pedal_d": 15 + 65 * travel, "throttle_commanded": 14 + 70 * travel ** 2})
+    m = pedal.pedal_map(samples)
+    assert m["pedal_sensor_range"] == {"rest": 15.0, "floor": 80.0}
+    assert len(m["curve"]) == 20
+    half = next(c for c in m["curve"] if c["pedal_travel_pct"] == "50-55")
+    assert 25 < half["throttle_of_range_pct"] < 31  # soft tip-in: half pedal is about a quarter throttle
+    assert m["curve"][-1]["throttle_of_range_pct"] > 90
+    assert "| 50-55 |" in pedal.to_markdown(m, "stock")
+    assert "barely moved" in pedal.pedal_map([{"pedal_d": 15.0, "throttle_commanded": 14.0}] * 5)["note"]
+    assert "did not report" in pedal.pedal_map([{"rpm": 700.0}])["note"]
+
+
+def test_cli_scan_and_pedal(tmp_path, capsys):
+    first, second = str(tmp_path / "a.json"), str(tmp_path / "b.json")
+    assert main(["--sim", "scan", "--out", first, "--label", "cold"]) == 0
+    assert main(["--sim", "scan", "--out", second, "--service", "22", "--start", "1230", "--end", "1240",
+                 "--compare", first]) == 0
+    assert json.loads((tmp_path / "a.json").read_text())["items"].keys() == {"21:30", "21:31"}
+    assert json.loads((tmp_path / "b.json").read_text())["items"].keys() == {"22:1234"}
+    assert main(["--sim", "pedal", "--out", str(tmp_path / "p"), "--duration", "0.3"]) == 0
+    assert (tmp_path / "p" / "pedal-map.md").exists()
+    assert "Saved pedal-map.md" in capsys.readouterr().out

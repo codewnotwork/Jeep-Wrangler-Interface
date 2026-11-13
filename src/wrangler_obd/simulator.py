@@ -103,6 +103,13 @@ class SimulatedVehicle:
             "baro": 99,
             "module_voltage": 14.2 + jitter(-0.05, 0.05),
             "ambient_temp": 18,
+            "throttle_relative": throttle - 14,
+            "throttle_b": throttle,
+            "throttle_commanded": throttle,
+            # Pedal sensors read 15% at rest. The stock map is soft at tip-in:
+            # throttle opens with the square of pedal travel.
+            "pedal_d": 15 + 65 * math.sqrt(driving),
+            "pedal_e": (15 + 65 * math.sqrt(driving)) / 2,
             "dist_mil_on": 42,
             "warmups_since_clear": 12,
             "dist_since_clear": 310,
@@ -113,7 +120,7 @@ def _encode(key: str, value: float) -> list[int]:
     """Inverse of the decoders in pids.py."""
     clamp = lambda v, hi=255: max(0, min(hi, int(round(v))))  # noqa: E731
     word = lambda v: [clamp(v, 0xFFFF) >> 8, clamp(v, 0xFFFF) & 0xFF]  # noqa: E731
-    if key in ("engine_load", "throttle", "fuel_level"):
+    if key in ("engine_load", "throttle", "fuel_level") or key.startswith(("throttle_", "pedal_")):
         return [clamp(value * 255 / 100)]
     if key in ("coolant_temp", "intake_temp", "ambient_temp"):
         return [clamp(value + 40)]
@@ -153,6 +160,7 @@ class SimulatedTransport:
         self.spaces = True
         self.ignition_on = True
         self._pending = b""
+        self.header = 0x7DF
         self._supported = {p.pid for p in PIDS.values()} | {0x01, 0x03}
 
     # Transport protocol --------------------------------------------------
@@ -200,6 +208,8 @@ class SimulatedTransport:
         except ValueError:
             return "?"
         v = self.vehicle
+        if mode in (0x21, 0x22):
+            return self._manufacturer_data(mode, cmd[2:])
         if mode == 0x01 and len(cmd) == 5:
             cmd = cmd[:4]  # trailing digit: number of replies to wait for
         if mode == 0x01 and len(cmd) == 4:
@@ -283,9 +293,34 @@ class SimulatedTransport:
                 payload += [m, tid, uas, value >> 8, value & 0xFF, lo >> 8, lo & 0xFF, hi >> 8, hi & 0xFF]
         return self._reply(payload) if len(payload) > 1 else "NO DATA"
 
+    def _manufacturer_data(self, service: int, rest: str) -> str:
+        """Made-up manufacturer data so the scan command can be exercised.
+
+        The identifiers here are invented. They are NOT the real Jeep ones.
+        """
+        digits = 2 if service == 0x21 else 4
+        if len(rest) == digits + 1:
+            rest = rest[:digits]  # trailing digit: number of replies to wait for
+        if len(rest) != digits:
+            return "?"
+        ident = int(rest, 16)
+        v = self.vehicle
+        coolant = v.values()["coolant_temp"]
+        items: dict[tuple[int, int, int], list[int]] = {
+            (0x7E1, 0x21, 0x30): [int(coolant * 0.9) + 40],            # a fluid temperature
+            (0x7E1, 0x21, 0x31): [0x03],                               # a gear number
+            (0x7E1, 0x22, 0x1234): list(int(coolant * 0.9 * 10).to_bytes(2, "big")),
+            (0x7E0, 0x21, 0x10): [0x55, 0xAA],
+        }
+        data = items.get((self.header, service, ident))
+        if data is None:
+            return self._hex([0x7F, service, 0x31]) if self.header in (0x7E0, 0x7E1) else "NO DATA"
+        return self._reply([service + 0x40, *bytes.fromhex(rest), *data])
+
     def _at(self, cmd: str) -> str:
         if cmd in ("Z", "WS"):
             self.echo, self.spaces = True, True
+            self.header = 0x7DF
             return "\r\rELM327 v1.5"
         if cmd == "I":
             return "ELM327 v1.5"
@@ -294,6 +329,9 @@ class SimulatedTransport:
             return "OK"
         if cmd in ("S0", "S1"):
             self.spaces = cmd == "S1"
+            return "OK"
+        if cmd.startswith("SH"):
+            self.header = int(cmd[2:], 16)
             return "OK"
         if cmd in ("L0", "L1", "H0", "H1") or cmd.startswith("SP") or cmd.startswith("ST"):
             return "OK"

@@ -88,6 +88,37 @@ one thing at a time (in Drive with the brake held, A/C on, stereo on) and compar
 A very brief dip can fall between samples, so the PCM's misfire counters are the more
 reliable evidence when the two disagree.
 
+### Transmission temperature and other hidden data
+
+Chrysler does not publish where transmission fluid temperature lives, and no identifier
+has been confirmed for this truck yet. `scan` finds it on the truck itself by asking the
+transmission module for every item it has (read-only):
+
+```bash
+wrangler-obd --port COM3 scan --out cold.json --label "cold, sat overnight"
+# drive 30 minutes, park, key on, engine off
+wrangler-obd --port COM3 scan --out hot.json --label "hot" --compare cold.json
+```
+
+The second run prints the items that changed. The one that went from about ambient to
+operating temperature is the fluid temperature. Run scans parked, key on, engine off.
+
+### Pedal map
+
+```bash
+wrangler-obd --port COM3 pedal --out pedal-stock --notes stock
+```
+
+Records how far the PCM opens the throttle for each pedal position (key on, engine off,
+press the pedal slowly to the floor and release). Useful as a stock baseline to compare
+against a throttle controller or a tune.
+
+### Using an AI agent
+
+`AGENTS.md` is a playbook for Claude Code, Codex or a similar agent: setup, which command
+answers which question, and step-by-step procedures for an idle stumble, finding
+transmission temperature and measuring throttle response.
+
 ### Windows setup
 
 1. Install Python 3.10 or newer from python.org and tick "Add python.exe to PATH".
@@ -114,6 +145,8 @@ print(elm.read_dtcs())
 - `dtc.py`: trouble code decoding and descriptions (generic + common JK codes)
 - `mode06.py`: on-board test result decoding (monitor names, unit scaling)
 - `idle.py`: idle check (RPM dip detection, misfire counter change)
+- `scan.py`: finds manufacturer data items (services 21 and 22) on one module
+- `pedal.py`: pedal-to-throttle curve
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings
 - `report.py`: diagnostic report (JSON + Markdown) and log statistics
 - `simulator.py`: fake ELM327 + JK PCM that speaks the real text protocol

@@ -69,7 +69,12 @@ _DEFS = [
     Pid(0x31, "dist_since_clear", "Distance since codes cleared", "km", 2, lambda d: float(_word(d))),
     Pid(0x33, "baro", "Barometric pressure", "kPa", 1, lambda d: float(d[0])),
     Pid(0x42, "module_voltage", "Control module voltage", "V", 2, lambda d: _word(d) / 1000.0),
+    Pid(0x45, "throttle_relative", "Relative throttle position", "%", 1, _pct),
     Pid(0x46, "ambient_temp", "Ambient air temperature", "°C", 1, _temp),
+    Pid(0x47, "throttle_b", "Throttle position B", "%", 1, _pct),
+    Pid(0x49, "pedal_d", "Accelerator pedal position D", "%", 1, _pct),
+    Pid(0x4A, "pedal_e", "Accelerator pedal position E", "%", 1, _pct),
+    Pid(0x4C, "throttle_commanded", "Commanded throttle actuator", "%", 1, _pct),
 ]
 
 PIDS: dict[str, Pid] = {p.key: p for p in _DEFS}
