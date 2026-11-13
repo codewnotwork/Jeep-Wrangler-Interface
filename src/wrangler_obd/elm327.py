@@ -111,6 +111,9 @@ class Elm327:
         self.version = ""
         self.protocol = ""
         self._supported: set[int] | None = None
+        #: When True, PID reads tell the adapter to stop waiting after one
+        #: reply instead of waiting out its timeout, which is much faster.
+        self.fast = False
 
     # -- low level -------------------------------------------------------
 
@@ -177,7 +180,7 @@ class Elm327:
     def read_pid(self, key: str) -> Reading | None:
         """Read one PID by key (see ``pids.PIDS``). Returns None if unsupported."""
         pid = PIDS[key]
-        for m in self._service_response(pid.command):
+        for m in self._service_response(pid.command + ("1" if self.fast else "")):
             if len(m) >= 2 + pid.nbytes and m[1] == pid.pid:
                 return Reading(pid, pid.decode(m[2 : 2 + pid.nbytes]))
         return None

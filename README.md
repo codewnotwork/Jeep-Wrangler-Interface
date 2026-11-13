@@ -70,6 +70,31 @@ drive at a steady speed for a few minutes. Report numbers are always metric.
 `live` and `report` flag hot coolant, low or high system voltage and fuel trims that are
 far from zero. Thresholds are in `alerts.py`.
 
+### Idle check
+
+```bash
+wrangler-obd --port COM3 idle --out idle-baseline --notes "Park, A/C off, stereo off"
+```
+
+For a stumble at idle that is too small to see on the tach. It samples RPM, short term
+fuel trims, upstream O2 sensors, manifold pressure, spark timing and voltage several
+times a second for three minutes, then reports each RPM dip with what the other readings
+did at that moment, whether the dips come at a regular rhythm, and how many new misfires
+the PCM counted per cylinder during the run. Output is `idle-report.md`,
+`idle-report.json` and `idle-log.csv`.
+
+Run it once as a baseline (fully warm, Park, everything off), then again while changing
+one thing at a time (in Drive with the brake held, A/C on, stereo on) and compare.
+A very brief dip can fall between samples, so the PCM's misfire counters are the more
+reliable evidence when the two disagree.
+
+### Windows setup
+
+1. Install Python 3.10 or newer from python.org and tick "Add python.exe to PATH".
+2. Plug in the OBDLink EX. Windows should install its driver and give it a COM port.
+3. In the project folder run `pip install -e .`, then `wrangler-obd ports` to find the
+   COM port, then `wrangler-obd --port COM3 info` (with your port) with the key on.
+
 ## Library use
 
 ```python
@@ -88,6 +113,7 @@ print(elm.read_dtcs())
 - `pids.py`: PID definitions, decoders, unit conversion
 - `dtc.py`: trouble code decoding and descriptions (generic + common JK codes)
 - `mode06.py`: on-board test result decoding (monitor names, unit scaling)
+- `idle.py`: idle check (RPM dip detection, misfire counter change)
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings
 - `report.py`: diagnostic report (JSON + Markdown) and log statistics
 - `simulator.py`: fake ELM327 + JK PCM that speaks the real text protocol

@@ -121,3 +121,65 @@ def test_cli_diagnostics(tmp_path, capsys):
     assert data["log"]["file"] == "log.csv" and data["log"]["samples"] >= 1
     assert "fuel_level" not in data["log"]["overall"] and "rpm" in data["log"]["overall"]
     assert (tmp_path / "r" / "report.md").exists() and (tmp_path / "r" / "log.csv").exists()
+
+
+class TickingClock:
+    """Advances a little on every call, so a capture loop makes progress."""
+
+    def __init__(self, start=0.0, step=0.01):
+        self.t, self.step = start, step
+
+    def __call__(self):
+        self.t += self.step
+        return self.t
+
+
+def _idle_run(stumble):
+    from wrangler_obd import idle
+
+    clock = TickingClock(start=200.0)  # warm engine
+    vehicle = SimulatedVehicle(clock=lambda: clock.t, seed=3)
+    vehicle._t0 = -1000.0  # long past the drive cycle start; pin to idle below
+    vehicle.stumble = stumble
+    base = vehicle.values
+
+    def idle_values():
+        v = base()
+        v.update(speed=0.0, coolant_temp=93.0, throttle=14.0, map=33.0)
+        v["rpm"] = 680 - (45 if vehicle.stumbling() else 0) + (hash(round(clock.t, 3)) % 9 - 4)
+        return v
+
+    vehicle.values = idle_values
+    e = Elm327(SimulatedTransport(vehicle))
+    e.connect()
+    before = idle.misfire_counts(e)
+    samples = idle.capture(e, 60, clock=clock, min_interval=0)
+    assert e.fast is False
+    return idle.analyze(samples, before, idle.misfire_counts(e), baro_kpa=99)
+
+
+def test_idle_check_finds_stumble():
+    a = _idle_run(stumble=True)
+    assert 7 <= a["dips"]["count"] <= 10
+    assert a["dips"]["spacing_s"]["mean"] == pytest.approx(7.0, abs=0.5)
+    assert all(e["drop_rpm"] >= 30 for e in a["dips"]["events"])
+    assert a["dips"]["mean_change_at_dip"]["o2_b2s1"] < -0.1
+    assert a["misfire_counters"]["Misfire, cylinder 2"]["new"] >= 7
+    assert a["misfire_counters"]["Misfire, cylinder 1"]["new"] == 0
+    text = " ".join(a["verdict"])
+    assert "evenly spaced" in text and "bank 2" in text and "cylinder 2: the PCM counted" in text
+
+
+def test_idle_check_clean_idle():
+    a = _idle_run(stumble=False)
+    assert a["dips"]["count"] == 0
+    assert any("No RPM dips" in n for n in a["verdict"])
+    assert any("did not move" in n for n in a["verdict"])
+
+
+def test_cli_idle(tmp_path, capsys):
+    assert main(["--sim", "idle", "--out", str(tmp_path), "--duration", "0.4", "--notes", "stereo off"]) == 0
+    data = json.loads((tmp_path / "idle-report.json").read_text(encoding="utf-8"))
+    assert data["idle_check"]["file"] == "idle-log.csv" and data["idle_check"]["samples"] > 5
+    md = (tmp_path / "idle-report.md").read_text(encoding="utf-8")
+    assert "## Idle check" in md and "stereo off" in md

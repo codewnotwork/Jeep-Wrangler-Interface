@@ -7,7 +7,7 @@ import os
 import sys
 import time
 
-from . import alerts, report as report_mod
+from . import alerts, idle as idle_mod, report as report_mod
 from . import dtc as dtc_mod
 from .elm327 import Elm327, ElmError
 from .logger import CsvLogger, record
@@ -168,6 +168,44 @@ def cmd_report(elm: Elm327, args: argparse.Namespace) -> None:
         print(f"  {f['severity']}: {f['message']}")
 
 
+def cmd_idle(elm: Elm327, args: argparse.Namespace) -> None:
+    os.makedirs(args.out, exist_ok=True)
+    print("Idle check. For a clean baseline: engine fully warm, in Park, A/C and stereo off, hands off the pedals.")
+    print(f"Sampling for {args.duration:.0f}s. Ctrl+C to stop early.")
+    before = idle_mod.misfire_counts(elm)
+    supported = elm.supported_pids()
+    keys = [k for k in idle_mod.IDLE_PIDS if PIDS[k].pid in supported]
+    with open(os.path.join(args.out, "idle-log.csv"), "w", newline="", encoding="utf-8") as fh:
+        try:
+            samples = idle_mod.capture(elm, args.duration, CsvLogger(fh, keys), keys)
+        except KeyboardInterrupt:
+            samples = []
+            print("Stopped early; the log is saved but was not analysed. Run again for the full analysis.")
+    baro = elm.read_pid("baro") if PIDS["baro"].pid in supported else None
+    analysis = idle_mod.analyze(samples, before, idle_mod.misfire_counts(elm), baro.value if baro else None)
+    data = report_mod.build_report(elm, None, "idle-log.csv", notes=args.notes or "", idle_check=analysis)
+    for name, text in (("idle-report.json", report_mod.to_json(data)), ("idle-report.md", report_mod.to_markdown(data))):
+        with open(os.path.join(args.out, name), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    print(f"Saved idle-report.md, idle-report.json and idle-log.csv in {args.out}")
+    for note in analysis["verdict"]:
+        print(f"  - {note}")
+
+
+def cmd_ports() -> int:
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        print("pyserial is required: pip install pyserial", file=sys.stderr)
+        return 2
+    ports = sorted(list_ports.comports())
+    if not ports:
+        print("No serial ports found. Plug in the adapter; on Windows it needs the FTDI driver to show up as a COM port.")
+    for p in ports:
+        print(f"  {p.device:<14} {p.description}")
+    return 0
+
+
 def cmd_clear(elm: Elm327, args: argparse.Namespace) -> None:
     if not args.yes:
         print("This clears stored codes, freeze frame data and readiness monitors.")
@@ -221,6 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--duration", type=float, help="also record live data for this many seconds and summarize it")
     p.add_argument("--interval", type=float, default=0.0, help="seconds between samples (default: as fast as possible)")
     p.add_argument("--notes", help="symptoms or context to include, e.g. 'rough idle when cold'")
+    p = sub.add_parser("idle", help="idle check: find small RPM stumbles and which cylinder or bank is behind them")
+    p.add_argument("--out", required=True, help="folder to write idle-report.md, idle-report.json and idle-log.csv into")
+    p.add_argument("--duration", type=float, default=180, help="seconds to sample (default 180)")
+    p.add_argument("--notes", help="conditions for this run, e.g. 'in Drive, A/C on'")
+    sub.add_parser("ports", help="list serial (COM) ports to find the adapter")
     p = sub.add_parser("clear", help="clear trouble codes and turn off the check engine light")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     p = sub.add_parser("log", help="record PIDs to a CSV file")
@@ -232,13 +275,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    "freeze": cmd_freeze, "readiness": cmd_readiness, "tests": cmd_tests, "report": cmd_report,
+    "freeze": cmd_freeze, "readiness": cmd_readiness, "tests": cmd_tests, "report": cmd_report, "idle": cmd_idle,
     "info": cmd_info, "pids": cmd_pids, "live": cmd_live, "dtc": cmd_dtc, "clear": cmd_clear, "log": cmd_log,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "ports":
+        return cmd_ports()
     try:
         elm = _open(args)
     except (TransportError, ElmError) as exc:

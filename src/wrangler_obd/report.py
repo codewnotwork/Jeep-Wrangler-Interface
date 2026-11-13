@@ -104,7 +104,13 @@ def _codes(codes: list[str]) -> list[dict]:
     return [{"code": c, "description": dtc_mod.describe(c)} for c in codes]
 
 
-def build_report(elm: Elm327, log_summary: dict | None = None, log_file: str | None = None, notes: str = "") -> dict:
+def build_report(
+    elm: Elm327,
+    log_summary: dict | None = None,
+    log_file: str | None = None,
+    notes: str = "",
+    idle_check: dict | None = None,
+) -> dict:
     """Query the vehicle and assemble the report dictionary."""
     status = elm.monitor_status() or {}
     dtcs = elm.read_dtcs()
@@ -162,6 +168,8 @@ def build_report(elm: Elm327, log_summary: dict | None = None, log_file: str | N
         "onboard_tests": [t.as_dict() for t in tests],
         "findings": findings,
     }
+    if idle_check is not None:
+        report["idle_check"] = {"file": log_file, **idle_check}
     if log_summary is not None:
         report["log"] = {"file": log_file, **{k: v for k, v in log_summary.items() if k != "findings"}}
     return report
@@ -204,6 +212,11 @@ def to_markdown(report: dict) -> str:
         out += [f"- **{f['severity']}**: {f['message']}" for f in report["findings"]]
     else:
         out.append("Nothing flagged automatically.")
+
+    if report.get("idle_check"):
+        from . import idle
+
+        out += [""] + idle.to_markdown(report["idle_check"])
 
     mil = report["check_engine_light_on"]
     out += ["", "## Trouble codes", "", f"Check engine light: {'unknown' if mil is None else 'ON' if mil else 'off'}", ""]

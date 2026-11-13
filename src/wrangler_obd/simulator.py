@@ -56,12 +56,27 @@ class SimulatedVehicle:
     def elapsed(self) -> float:
         return self._clock() - self._t0
 
+    #: An idle stumble: every STUMBLE_EVERY seconds cylinder 2 misfires briefly.
+    STUMBLE_EVERY = 7.0
+    STUMBLE_LENGTH = 0.4
+    stumble = True
+
+    def stumbling(self) -> bool:
+        return self.stumble and 3.0 <= self.elapsed() % self.STUMBLE_EVERY < 3.0 + self.STUMBLE_LENGTH
+
+    def new_misfires(self) -> int:
+        """Misfires counted since start: one per stumble."""
+        if not self.stumble or self.elapsed() < 3.0:
+            return 0
+        return int((self.elapsed() - 3.0) // self.STUMBLE_EVERY) + 1
+
     def values(self) -> dict[str, float]:
         t = self.elapsed()
         jitter = self._rng.uniform
+        miss = self.stumbling()
         # Idle for 20 s, then a gentle repeating drive cycle.
         driving = max(0.0, math.sin((t - 20) / 15)) if t > 20 else 0.0
-        rpm = 680 + driving * 1800 + jitter(-15, 15)
+        rpm = 680 + driving * 1800 + jitter(-8, 8) - (45 if miss else 0)
         speed = driving * 80
         throttle = 14 + driving * 35
         coolant = min(96.0, 20 + t * 0.6)
@@ -81,7 +96,7 @@ class SimulatedVehicle:
             "throttle": throttle,
             "o2_b1s1": 0.45 + 0.4 * math.sin(t * 3),
             "o2_b1s2": 0.65,
-            "o2_b2s1": 0.45 + 0.4 * math.sin(t * 3 + 1),
+            "o2_b2s1": 0.12 if miss else 0.45 + 0.4 * math.sin(t * 3 + 1),  # unburned oxygen reads lean
             "o2_b2s2": 0.66,
             "run_time": t,
             "fuel_level": 61,
@@ -185,6 +200,8 @@ class SimulatedTransport:
         except ValueError:
             return "?"
         v = self.vehicle
+        if mode == 0x01 and len(cmd) == 5:
+            cmd = cmd[:4]  # trailing digit: number of replies to wait for
         if mode == 0x01 and len(cmd) == 4:
             pid = int(cmd[2:4], 16)
             if pid % 0x20 == 0:
@@ -261,6 +278,8 @@ class SimulatedTransport:
         payload = [0x46]
         for m, tid, uas, value, lo, hi in results:
             if m == mid:
+                if m in (0xA1, 0xA3) and tid == 0x0C:
+                    value += self.vehicle.new_misfires()
                 payload += [m, tid, uas, value >> 8, value & 0xFF, lo >> 8, lo & 0xFF, hi >> 8, hi & 0xFF]
         return self._reply(payload) if len(payload) > 1 else "NO DATA"
 
