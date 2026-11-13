@@ -28,6 +28,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import cli
 from .elm327 import Elm327, ElmError
+from .monitor import Monitor
 from .simulator import SimulatedTransport
 from .transport import SerialTransport, TransportError
 
@@ -110,6 +111,7 @@ class App:
         self.lock = threading.Lock()
         self.last_seen = time.time()
         self.progress = self._load_progress()
+        self.monitor: Monitor | None = None
 
     # -- saved progress ----------------------------------------------------
 
@@ -151,6 +153,9 @@ class App:
         return self.vehicle
 
     def disconnect(self) -> None:
+        if self.monitor and self.monitor.running:
+            self.monitor.stop()
+            self.monitor.join(30)
         if self.elm:
             try:
                 self.elm.close()
@@ -159,11 +164,42 @@ class App:
         self.elm, self.port, self.vehicle = None, None, {}
 
     def busy(self) -> bool:
-        return self.job is not None and self.job.finished is None
+        return (self.job is not None and self.job.finished is None) or self.monitoring()
+
+    def monitoring(self) -> bool:
+        return self.monitor is not None and self.monitor.running
+
+    # -- monitor ---------------------------------------------------------------
+
+    def start_monitor(self, notes: str = "", speed_factor: float = 1.0) -> None:
+        if not self.elm:
+            raise RuntimeError("Connect to the adapter first.")
+        if self.busy():
+            raise RuntimeError("Something is already running. Stop it first.")
+        self.monitor = Monitor(self.elm, self._folder("monitor"), notes=notes, speed_factor=speed_factor)
+        self.monitor.start()
+
+    def stop_monitor(self) -> None:
+        if self.monitor:
+            self.monitor.stop()
+
+    def _layout_file(self) -> Path:
+        return self.data_dir / "layout.json"
+
+    def layout(self) -> dict:
+        try:
+            return json.loads(self._layout_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def save_layout(self, layout: dict) -> None:
+        tiles = [str(k)[:60] for k in layout.get("tiles", [])][:60]
+        window = int(layout.get("window", 300))
+        self._layout_file().write_text(json.dumps({"tiles": tiles, "window": window}), encoding="utf-8")
 
     def live(self) -> dict:
         """A few readings for the header, only when no step is running."""
-        if not self.elm or self.busy() or not self.lock.acquire(blocking=False):
+        if not self.elm or self.busy() or not self.lock.acquire(blocking=False):  # busy() covers monitoring
             return {}
         try:
             r = self.elm.read_pids(["rpm", "coolant_temp", "speed", "module_voltage"])
@@ -312,6 +348,7 @@ class App:
             "job": self.job.as_dict() if self.job else None,
             "progress": self.progress, "data_dir": str(self.data_dir),
             "trans_temp_found": self.has_trans_temp(),
+            "monitoring": self.monitoring(),
         }
 
 
@@ -343,6 +380,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self.app.state())
         if url.path == "/api/ports":
             return self._json(list_ports())
+        if url.path == "/api/monitor":
+            m = self.app.monitor
+            since = float(parse_qs(url.query).get("since", ["-1"])[0])
+            return self._json({"exists": False} if m is None else {"exists": True, **m.display(since)})
+        if url.path == "/api/layout":
+            return self._json(self.app.layout())
         if url.path == "/api/live":
             return self._json(self.app.live())
         if url.path == "/view":
@@ -374,6 +417,16 @@ class Handler(BaseHTTPRequestHandler):
                 app.disconnect()
             elif path == "/api/run":
                 app.start(body.get("step", ""), body)
+            elif path == "/api/monitor/start":
+                app.start_monitor(body.get("notes") or "", float(body.get("speed_factor") or 1.0))
+            elif path == "/api/monitor/stop":
+                app.stop_monitor()
+            elif path == "/api/monitor/marker":
+                if not app.monitoring():
+                    raise RuntimeError("Start monitoring first.")
+                return self._json(app.monitor.add_marker(str(body.get("text") or "")))
+            elif path == "/api/layout":
+                app.save_layout(body)
             elif path == "/api/stop":
                 app.stop()
             elif path == "/api/zip":

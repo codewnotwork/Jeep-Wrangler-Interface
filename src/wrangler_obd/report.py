@@ -28,6 +28,16 @@ SLOW_PIDS = {"dist_mil_on", "warmups_since_clear", "dist_since_clear", "baro", "
 Sample = Mapping[str, float]
 
 
+def _label(key: str) -> tuple[str, str]:
+    """(name, unit) for a standard PID key or an ``x_`` manufacturer reading."""
+    if key in PIDS:
+        return PIDS[key].name, PIDS[key].unit
+    for e in extras.EXTRAS:
+        if key == f"x_{e.key}":
+            return e.name, e.unit
+    return key, ""
+
+
 def _round(value: float) -> float:
     return round(value, 2)
 
@@ -53,7 +63,7 @@ def summarize_log(samples: Iterable[Sample], duration_s: float | None = None) ->
 
     def collect(rows: list[Sample]) -> dict:
         out = {}
-        for key in PIDS:
+        for key in list(PIDS) + [f"x_{e.key}" for e in extras.EXTRAS]:
             vals = [r[key] for r in rows if key in r]
             if vals:
                 out[key] = _stats(vals)
@@ -179,6 +189,72 @@ def build_report(
     return report
 
 
+def offline_report(log_summary: dict, log_file: str, notes: str = "", fuel_economy: dict | None = None) -> dict:
+    """A report built from a recording alone, for when the truck can no longer be asked."""
+    doc = {
+        "schema": SCHEMA,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "tool_version": __version__,
+        "units": "metric (°C, km/h, kPa, g/s, km)",
+        "vehicle": {"description": VEHICLE, "vin": None, "protocol": "not read (connection lost before saving)",
+                    "adapter": None, "battery_voltage_at_port": None},
+        "owner_notes": notes,
+        "check_engine_light_on": None,
+        "trouble_codes": {"stored": [], "pending": [], "permanent": []},
+        "freeze_frame": None,
+        "readiness": {"monitors": [], "incomplete": [], "ready_for_emissions_test": None},
+        "fuel_system_status": None,
+        "snapshot": {},
+        "manufacturer_readings": [],
+        "onboard_tests": [],
+        "findings": list(log_summary.get("findings", [])),
+        "log": {"file": log_file, **{k: v for k, v in log_summary.items() if k != "findings"}},
+    }
+    if fuel_economy is not None:
+        doc["fuel_economy"] = fuel_economy
+    return doc
+
+
+COMPARE_KEYS = (
+    "rpm", "speed", "coolant_temp", "stft_b1", "ltft_b1", "stft_b2", "ltft_b2", "map", "engine_load",
+    "timing_advance", "module_voltage", "x_trans_temp",
+)
+
+
+def segments_between(samples: list, markers: list[dict]) -> list[dict]:
+    """Split a recording at its markers and average the key readings in each part.
+
+    This is the before/after comparison: drop a marker when something is
+    changed, and the parts either side of it can be compared directly.
+    """
+    if not samples or not markers:
+        return []
+    edges = [samples[0][0]] + [m["t"] for m in markers] + [samples[-1][0] + 0.001]
+    names = ["Start"] + [m["text"] for m in markers]
+    out = []
+    for name, lo, hi in zip(names, edges, edges[1:]):
+        part = [(t, v) for t, v in samples if lo <= t < hi]
+        if len(part) < 2:
+            continue
+        means = {}
+        for key in COMPARE_KEYS:
+            vals = [v[key] for _, v in part if key in v]
+            if vals:
+                means[key] = _round(statistics.fmean(vals))
+        mpg = economy_summary(part)
+        out.append({
+            "after_marker": name, "from_s": round(lo, 1), "to_s": round(hi, 1), "samples": len(part),
+            "means": means, "mpg": mpg["mpg"] if mpg else None,
+        })
+    return out
+
+
+def economy_summary(part: list) -> dict | None:
+    from . import economy
+
+    return economy.summarize(part)
+
+
 def to_json(report: dict) -> str:
     return json.dumps(report, indent=2, ensure_ascii=False) + "\n"
 
@@ -210,6 +286,30 @@ def to_markdown(report: dict) -> str:
         out.append(f"- Fuel system: {report['fuel_system_status']}")
     if report["owner_notes"]:
         out += ["", "## Owner's notes", "", report["owner_notes"]]
+
+    causes = report.get("likely_causes")
+    if causes is not None:
+        out += ["", "## Likely causes (automatic pattern check)", ""]
+        cov = causes.get("coverage", {})
+        out.append(f"Based on {cov.get('warm_idle_s', 0)} s of warm idle and {cov.get('cruise_s', 0)} s of steady cruise. "
+                   "These are leads to confirm, not a diagnosis.")
+        if not causes["causes"]:
+            out += ["", "No fault patterns matched."]
+        for c in causes["causes"]:
+            out += ["", f"### {c['title']} (score {c['score']}/100)", ""]
+            out += [f"- {e}" for e in c["evidence"]]
+            out.append(f"- Next check: {c['next_check']}")
+        out += [""] + [f"_{n}_" for n in causes.get("notes", [])]
+
+    if report.get("segments_between_markers"):
+        segs = report["segments_between_markers"]
+        keys = [k for k in COMPARE_KEYS if any(k in s["means"] for s in segs)]
+        out += ["", "## Before and after each marker", "",
+                "Average of each reading in the part of the recording that follows each marker.", ""]
+        head = ["Part", "Seconds", "mpg"] + ["{} ({})".format(*_label(k)) for k in keys]
+        rows = [[s["after_marker"], round(s["to_s"] - s["from_s"]), s["mpg"] if s["mpg"] is not None else ""]
+                + [s["means"].get(k, "") for k in keys] for s in segs]
+        out += _table(head, rows)
 
     out += ["", "## Findings", ""]
     if report["findings"]:
@@ -292,7 +392,7 @@ def to_markdown(report: dict) -> str:
 
 
 def _stat_table(stats: Mapping[str, Mapping[str, float]]) -> list[str]:
-    rows = [[f"{PIDS[k].name} ({PIDS[k].unit})", s["min"], s["mean"], s["max"]] for k, s in stats.items()]
+    rows = [["{} ({})".format(*_label(k)), s["min"], s["mean"], s["max"]] for k, s in stats.items()]
     return _table(["Reading", "Min", "Mean", "Max"], rows)
 
 

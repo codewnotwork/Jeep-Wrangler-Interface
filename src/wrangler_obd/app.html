@@ -19,6 +19,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
   header { position: sticky; top: 0; z-index: 2; background: var(--card); border-bottom: 1px solid var(--line);
@@ -30,7 +31,7 @@
   .gauge { text-align: right; }
   .gauge b { display: block; font-size: 20px; line-height: 1.1; }
   .gauge span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  main { max-width: 1180px; margin: 0 auto; padding: 20px; display: grid; gap: 20px;
+  main { max-width: 1400px; margin: 0 auto; padding: 20px; display: grid; gap: 20px;
          grid-template-columns: minmax(0, 1fr) minmax(0, 420px); align-items: start; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } .gauges { margin-left: 0; } }
   .steps { display: grid; gap: 14px; }
@@ -59,7 +60,7 @@
   .vehicle { font-size: 14px; color: var(--muted); margin-top: 8px; }
   .vehicle b { color: var(--ink); font-weight: 600; }
   .error { color: var(--bad); font-size: 14px; margin-top: 8px; }
-  aside { position: sticky; top: 84px; }
+  main aside { position: sticky; top: 84px; }
   @media (max-width: 900px) { aside { position: static; } }
   .bar { height: 10px; border-radius: 999px; background: var(--chip); overflow: hidden; margin: 10px 0 6px; }
   .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .6s linear; }
@@ -68,6 +69,48 @@
   .times { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
   pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0 0;
             font: 13px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; }
+
+  .top { max-width: 1400px; margin: 0 auto; padding: 20px 20px 0; }
+  .tabs { display: flex; gap: 4px; margin-top: 16px; border-bottom: 1px solid var(--line); }
+  .tab { border: 0; background: none; border-radius: 8px 8px 0 0; padding: 10px 18px; color: var(--muted); font-weight: 600;
+         border-bottom: 3px solid transparent; }
+  .tab.on { color: var(--ink); border-bottom-color: var(--accent); }
+  .dash { max-width: 1400px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+  .controls { display: grid; gap: 12px; }
+  .dashgrid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); align-items: start; }
+  @media (max-width: 1000px) { .dashgrid { grid-template-columns: 1fr; } }
+  .tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 8px;
+          position: relative; cursor: grab; min-width: 0; }
+  .tile.dragging { opacity: .4; }
+  .tile.over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  .tile .name { font-size: 13px; color: var(--muted); padding-right: 22px; line-height: 1.3; min-height: 34px; }
+  .tile .value { font-size: 30px; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .tile .value small { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+  .tile .range { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .tile .x { position: absolute; top: 6px; right: 6px; border: 0; background: none; color: var(--muted);
+             padding: 2px 7px; font-size: 18px; line-height: 1; border-radius: 6px; }
+  .tile .x:hover { background: var(--chip); color: var(--ink); }
+  .tile svg { display: block; width: 100%; height: 56px; margin-top: 6px; overflow: visible; }
+  .tile .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .tile .mark { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+  .tile .cross { stroke: var(--ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .tile .tip { position: absolute; bottom: 68px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+               font-size: 12px; padding: 3px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; z-index: 1; }
+  :root { --series: #2a78d6; }
+  @media (prefers-color-scheme: dark) { :root { --series: #3987e5; } }
+  .causes h2 { margin-bottom: 8px; }
+  .cause { border-top: 1px solid var(--line); padding: 12px 0; color: var(--ink); }
+  .cause:first-child { border-top: 0; padding-top: 0; }
+  .cause h3 { font-size: 15px; margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+  .cause .lvl { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .lvl.high { background: var(--bad-soft); color: var(--bad); }
+  .lvl.med { background: var(--warn-soft); color: var(--warn); }
+  .lvl.low { background: var(--chip); color: var(--muted); }
+  .cause ul { margin: 0 0 6px; padding-left: 18px; font-size: 14px; color: var(--muted); }
+  .cause .next { font-size: 14px; }
+  .cause .next b { color: var(--accent); }
+  .empty { grid-column: 1 / -1; padding: 30px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; }
   .muted { color: var(--muted); }
   .ok { color: var(--accent); } .bad { color: var(--bad); }
   footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 30px; font-size: 14px; color: var(--muted);
@@ -86,10 +129,9 @@
   </div>
 </header>
 
-<main>
-  <div class="steps">
+<div class="top">
     <section class="card" id="step-connect">
-      <h2><span class="num">1</span>Connect <span class="when">Key on</span></h2>
+      <h2>Connect to the truck <span class="when">Key on</span></h2>
       <p>Plug the OBDLink into the port under the dash (left of the steering column) and into this laptop, then turn the key to ON.</p>
       <div class="row">
         <select id="port"></select>
@@ -100,15 +142,59 @@
       <div class="vehicle" id="vehicle"></div>
       <div class="error" id="connect-err"></div>
     </section>
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-dash" class="tab on" data-tab="dash">Dashboard</button>
+    <button role="tab" id="tab-steps" class="tab" data-tab="steps">Guided steps</button>
+  </nav>
+</div>
 
+<div id="panel-dash" class="dash">
+  <section class="card controls">
+    <div class="row">
+      <button class="primary" id="mon-start">Start monitoring</button>
+      <button class="danger" id="mon-stop" hidden>Stop and save</button>
+      <span id="mon-status" class="muted">Records every reading the truck supports. Connect first.</span>
+    </div>
+    <div class="row" id="mon-tools" hidden>
+      <input class="notes" id="marker-text" placeholder="Marker: what did you just change? (e.g. unplugged purge valve)" maxlength="200">
+      <button id="marker-add">Add marker</button>
+      <label>Show last
+        <select id="window"><option value="60">1 min</option><option value="300" selected>5 min</option><option value="900">15 min</option><option value="3600">60 min</option></select>
+      </label>
+    </div>
+    <div class="row">
+      <select id="tile-pick" aria-label="Reading to add"></select>
+      <button id="tile-add">Add tile</button>
+      <button id="tile-all">Show all</button>
+      <button id="tile-reset">Reset tiles</button>
+      <span class="muted" id="tile-hint">Drag a tile to move it. Use × to remove it.</span>
+    </div>
+    <div class="row" id="mon-saved" hidden>
+      <span class="ok" id="mon-saved-text"></span>
+      <button id="mon-view">View report for an LLM</button>
+      <button id="mon-open">Open folder</button>
+    </div>
+  </section>
+
+  <div class="dashgrid">
+    <div class="tiles" id="tiles"></div>
+    <aside class="card causes" id="causes">
+      <h2>Likely causes</h2>
+      <div id="causes-body" class="muted">Start monitoring. Patterns across the readings will be checked every few seconds.</div>
+    </aside>
+  </div>
+</div>
+
+<main id="panel-steps" hidden>
+  <div class="steps">
     <section class="card" id="step-pedal">
-      <h2><span class="num">2</span>Pedal map <span class="when">Key on, engine off</span></h2>
-      <p>Takes 45 seconds. After pressing Start, slowly press the gas pedal to the floor and let it back up, about 10 seconds each way, until the time runs out. If the truck doesn't report the pedal, that's fine: skip to step 3.</p>
+      <h2><span class="num">1</span>Pedal map <span class="when">Key on, engine off</span></h2>
+      <p>Takes 45 seconds. After pressing Start, slowly press the gas pedal to the floor and let it back up, about 10 seconds each way, until the time runs out. If the truck doesn't report the pedal, that's fine: skip to step 2.</p>
       <div class="row"><button class="primary" data-step="pedal">Start pedal map</button><span class="result" data-result="pedal"></span></div>
     </section>
 
     <section class="card" id="step-drive">
-      <h2><span class="num">3</span>Record a drive <span class="when">Start the engine first</span></h2>
+      <h2><span class="num">2</span>Record a drive <span class="when">Start the engine first</span></h2>
       <p>Start the engine, press Start, then drive. Include a few minutes of idling, some town driving and some steady highway. Don't look at the laptop while driving: it stops on its own.</p>
       <div class="row">
         <label>Length <select id="minutes"><option>15</option><option selected>30</option><option>45</option><option>60</option></select> min</label>
@@ -118,7 +204,7 @@
     </section>
 
     <section class="card" id="step-idle">
-      <h2><span class="num">4</span>Idle checks <span class="when">Engine warm, parked</span></h2>
+      <h2><span class="num">3</span>Idle checks <span class="when">Engine warm, parked</span></h2>
       <p>Right after the drive. Each one takes 3 minutes. Set the truck up as described, press Start, and keep your feet off the gas.</p>
       <div class="sub row"><span class="label"><b>A.</b> In Park, A/C off, stereo off</span><span class="result" data-result="idle-1"></span><button class="primary" data-step="idle-1">Start</button></div>
       <div class="sub row"><span class="label"><b>B.</b> In Drive, foot firmly on the brake</span><span class="result" data-result="idle-2"></span><button class="primary" data-step="idle-2">Start</button></div>
@@ -127,7 +213,7 @@
     </section>
 
     <section class="card" id="step-trans">
-      <h2><span class="num">5</span>Transmission temperature <span class="when">Key on, engine off</span></h2>
+      <h2><span class="num">4</span>Transmission temperature <span class="when">Key on, engine off</span></h2>
       <p id="trans-text">Do the drive first. The drive report tries to read transmission temperature directly.</p>
       <div id="trans-scans" hidden>
         <div class="sub row"><span class="label"><b>Hot scan:</b> right after a drive, engine off, key on. About 1 to 2 minutes.</span><span class="result" data-result="scan-hot"></span><button class="primary" data-step="scan-hot">Start</button></div>
@@ -136,7 +222,7 @@
     </section>
 
     <section class="card" id="step-send">
-      <h2><span class="num">6</span>Send the results</h2>
+      <h2><span class="num">5</span>Send the results</h2>
       <p>Makes one ZIP file of everything recorded and opens its folder. Attach that file in the Claude thread.</p>
       <div class="row"><button class="primary" id="zip">Make ZIP to send</button><button id="open">Open data folder</button><span class="result" id="zip-result"></span></div>
     </section>
@@ -203,7 +289,7 @@ async function loadPorts() {
 
 function render() {
   if (!state) return;
-  const busy = state.job && state.job.running;
+  const busy = (state.job && state.job.running) || state.monitoring;
   const v = state.vehicle || {};
   $("conn").textContent = state.connected ? (v.simulator ? "Simulator" : `Connected on ${state.port}`) : "Not connected";
   $("conn").className = "pill" + (state.connected ? " on" : "");
@@ -220,6 +306,7 @@ function render() {
     const p = state.progress[el.dataset.result];
     el.textContent = p ? `✓ ${p.when}${p.summary ? " · " + p.summary : ""}` : "";
   });
+  $("step-connect").querySelector("p").hidden = state.connected;
   const sections = { "step-pedal": ["pedal"], "step-drive": ["drive"], "step-idle": ["idle-1", "idle-2", "idle-3", "idle-4"], "step-trans": ["scan-cold"] };
   for (const [id, steps] of Object.entries(sections)) $(id).classList.toggle("done", steps.every(s => state.progress[s]));
 
@@ -260,7 +347,7 @@ async function poll() {
 }
 
 async function pollLive() {
-  if (!state || !state.connected || (state.job && state.job.running)) return;
+  if (!state || !state.connected || (state.job && state.job.running) || state.monitoring) return;
   const r = await api("/api/live").catch(() => ({}));
   if (r.rpm !== undefined) $("g-rpm").textContent = Math.round(r.rpm);
   if (r.coolant_temp !== undefined) $("g-ect").textContent = Math.round(r.coolant_temp * 9 / 5 + 32);
@@ -301,6 +388,215 @@ $("quit").onclick = async () => {
   document.body.innerHTML = "<p style='padding:40px;font-size:18px'>Wrangler Diagnostics has closed. You can close this tab.</p>";
 };
 function alertBox(msg) { $("job-idle").hidden = false; $("job-idle").textContent = msg; $("job-idle").className = "bad"; }
+
+// ---- Dashboard ----------------------------------------------------------
+const DEFAULT_TILES = ["rpm", "speed", "coolant_temp", "x_trans_temp", "stft_b1", "ltft_b1", "stft_b2", "ltft_b2",
+                       "map", "engine_load", "timing_advance", "module_voltage", "o2_b1s1", "o2_b2s1", "evap_purge", "throttle"];
+let mon = { catalog: [], samples: [], markers: [], since: -1, folder: null, running: false };
+let tiles = null, windowS = 300, dragKey = null, layoutLoaded = false;
+
+function showTab(name) {
+  for (const t of ["dash", "steps"]) {
+    $("panel-" + t).hidden = t !== name;
+    $("tab-" + t).classList.toggle("on", t === name);
+  }
+  try { localStorage.setItem("tab", name); } catch (e) {}
+}
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+function saveLayout() { api("/api/layout", { tiles, window: windowS }).catch(() => {}); }
+
+function catalogEntry(key) { return mon.catalog.find(c => c.key === key); }
+
+function fmtVal(v, unit) {
+  if (v === undefined || v === null) return "–";
+  const a = Math.abs(v);
+  if (unit === "V" || unit === "ratio") return v.toFixed(2);
+  if (unit === "rpm" || unit === "s" || unit === "count" || a >= 1000) return Math.round(v).toLocaleString();
+  return a >= 100 ? v.toFixed(0) : v.toFixed(1);
+}
+function fmtAgo(s) { return s < 60 ? `${Math.round(s)} s ago` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s ago`; }
+
+function renderPicker() {
+  const sel = $("tile-pick"), keep = sel.value;
+  sel.innerHTML = "";
+  const free = mon.catalog.filter(c => !(tiles || []).includes(c.key));
+  if (!mon.catalog.length) sel.innerHTML = "<option>Readings appear after monitoring starts</option>";
+  else if (!free.length) sel.innerHTML = "<option>All readings are on screen</option>";
+  for (const c of free) {
+    const o = document.createElement("option");
+    o.value = c.key; o.textContent = `${c.name}${c.unit ? " (" + c.unit + ")" : ""}`;
+    sel.appendChild(o);
+  }
+  if (keep && free.some(c => c.key === keep)) sel.value = keep;
+  $("tile-add").disabled = !free.length;
+}
+
+function buildTiles() {
+  const box = $("tiles");
+  box.innerHTML = "";
+  const shown = (tiles || []).filter(k => catalogEntry(k));
+  if (!shown.length) {
+    box.innerHTML = `<div class="empty">${mon.catalog.length ? "No tiles yet. Pick a reading above and press Add tile." : "Connect, then press Start monitoring. A tile appears for each reading you choose."}</div>`;
+    return;
+  }
+  for (const key of shown) {
+    const c = catalogEntry(key), el = document.createElement("div");
+    el.className = "tile"; el.draggable = true; el.dataset.key = key;
+    el.innerHTML = `<button class="x" title="Remove tile" aria-label="Remove ${c.name}">×</button>
+      <div class="name">${c.name}</div>
+      <div class="value"><span class="v">–</span><small>${c.unit}</small></div>
+      <div class="range">&nbsp;</div>
+      <svg viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label="Trend of ${c.name}">
+        <g class="marks"></g><path class="line" d=""></path><line class="cross" y1="0" y2="40" visibility="hidden"></line>
+      </svg><div class="tip" hidden></div>`;
+    el.querySelector(".x").onclick = () => { tiles = tiles.filter(k => k !== key); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
+    el.addEventListener("dragstart", e => { dragKey = key; el.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; });
+    el.addEventListener("dragend", () => { el.classList.remove("dragging"); document.querySelectorAll(".tile.over").forEach(t => t.classList.remove("over")); });
+    el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("over"); });
+    el.addEventListener("dragleave", () => el.classList.remove("over"));
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      if (!dragKey || dragKey === key) return;
+      const from = tiles.indexOf(dragKey), to = tiles.indexOf(key);
+      tiles.splice(from, 1); tiles.splice(to, 0, dragKey);
+      saveLayout(); buildTiles(); drawTiles();
+    });
+    const svg = el.querySelector("svg");
+    svg.addEventListener("mousemove", e => hoverTile(el, e));
+    svg.addEventListener("mouseleave", () => { el.querySelector(".cross").setAttribute("visibility", "hidden"); el.querySelector(".tip").hidden = true; });
+    box.appendChild(el);
+  }
+}
+
+function seriesFor(key) {
+  if (!mon.samples.length) return [];
+  const end = mon.samples[mon.samples.length - 1][0], start = end - windowS, pts = [];
+  for (const [t, v] of mon.samples) if (t >= start && v[key] !== undefined) pts.push([t, v[key]]);
+  return pts;
+}
+
+function drawTiles() {
+  if (!mon.samples.length) return;
+  const end = mon.samples[mon.samples.length - 1][0], start = end - windowS;
+  document.querySelectorAll(".tile").forEach(el => {
+    const key = el.dataset.key, c = catalogEntry(key), pts = seriesFor(key);
+    el._pts = pts; el._span = [start, end];
+    if (!pts.length) return;
+    const vals = pts.map(p => p[1]);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    el.querySelector(".v").textContent = fmtVal(vals[vals.length - 1], c.unit);
+    el.querySelector(".range").textContent = `low ${fmtVal(lo, c.unit)} · high ${fmtVal(hi, c.unit)}`;
+    if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    el._scale = [lo, hi];
+    // Thin to at most ~200 points so drawing stays light.
+    const step = Math.max(1, Math.floor(pts.length / 200));
+    let d = "";
+    for (let i = 0; i < pts.length; i += step) {
+      const x = (pts[i][0] - start) / windowS * 100, y = 40 - (pts[i][1] - lo) / (hi - lo) * 40;
+      d += (d ? "L" : "M") + x.toFixed(2) + " " + y.toFixed(2);
+    }
+    el.querySelector(".line").setAttribute("d", d);
+    el.querySelector(".marks").innerHTML = mon.markers.filter(m => m.t >= start)
+      .map(m => { const x = (m.t - start) / windowS * 100; return `<line class="mark" x1="${x}" x2="${x}" y1="0" y2="40"><title>${m.text.replace(/</g, "&lt;")}</title></line>`; }).join("");
+  });
+  const last = mon.samples[mon.samples.length - 1][1];
+  if (last.rpm !== undefined) $("g-rpm").textContent = Math.round(last.rpm);
+  if (last.coolant_temp !== undefined) $("g-ect").textContent = Math.round(last.coolant_temp);
+  if (last.speed !== undefined) $("g-spd").textContent = Math.round(last.speed);
+  if (last.module_voltage !== undefined) $("g-v").textContent = last.module_voltage.toFixed(1);
+}
+
+function hoverTile(el, e) {
+  const pts = el._pts; if (!pts || !pts.length) return;
+  const box = el.querySelector("svg").getBoundingClientRect(), frac = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+  const t = el._span[0] + frac * windowS;
+  let best = pts[0];
+  for (const p of pts) if (Math.abs(p[0] - t) < Math.abs(best[0] - t)) best = p;
+  const x = (best[0] - el._span[0]) / windowS * 100, c = catalogEntry(el.dataset.key);
+  const cross = el.querySelector(".cross");
+  cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
+  const tip = el.querySelector(".tip");
+  tip.hidden = false; tip.style.left = Math.min(85, Math.max(15, x)) + "%";
+  tip.textContent = `${fmtVal(best[1], c.unit)} ${c.unit} · ${fmtAgo(el._span[1] - best[0])}`;
+}
+
+function renderCauses(a) {
+  const body = $("causes-body");
+  if (!a || !a.coverage || a.coverage.samples === undefined) return;
+  let html = "";
+  for (const c of a.causes) {
+    const lvl = c.score >= 75 ? ["high", "Likely"] : c.score >= 55 ? ["med", "Possible"] : ["low", "Worth a look"];
+    html += `<div class="cause"><h3><span>${c.title}</span><span class="lvl ${lvl[0]}">${lvl[1]}</span></h3>
+      <ul>${c.evidence.map(e => `<li>${e}</li>`).join("")}</ul><div class="next"><b>Next check:</b> ${c.next_check}</div></div>`;
+  }
+  if (!a.causes.length) html = `<div class="cause"><span class="ok">No fault patterns so far.</span></div>`;
+  html += `<div class="cause muted" style="font-size:13px">Checked ${a.coverage.warm_idle_s} s of warm idle and ${a.coverage.cruise_s} s of steady cruise.${a.notes.map(n => "<br>" + n).join("")}<br>These are leads to confirm, not a diagnosis.</div>`;
+  body.className = ""; body.innerHTML = html;
+}
+
+async function pollMonitor() {
+  let r;
+  try { r = await api(`/api/monitor?since=${mon.since}`); } catch (e) { return; }
+  if (!r.exists) { renderMonitorControls(null); return; }
+  if (r.folder !== mon.folder) { mon = { catalog: [], samples: [], markers: [], since: -1, folder: r.folder, running: r.running }; r = await api(`/api/monitor?since=-1`); }
+  const firstCatalog = !mon.catalog.length && r.catalog.length;
+  mon.catalog = r.catalog; mon.markers = r.markers; mon.running = r.running;
+  for (const s of r.samples) mon.samples.push(s);
+  if (mon.samples.length) mon.since = mon.samples[mon.samples.length - 1][0];
+  if (mon.samples.length > 30000) mon.samples.splice(0, mon.samples.length - 30000);
+  if (firstCatalog) {
+    if (!tiles || !tiles.length) tiles = DEFAULT_TILES.filter(k => catalogEntry(k));
+    buildTiles(); renderPicker();
+  }
+  drawTiles(); renderCauses(r.analysis); renderMonitorControls(r);
+}
+
+function renderMonitorControls(r) {
+  const connected = state && state.connected, running = r && r.running;
+  const stepBusy = state && state.job && state.job.running;
+  $("mon-start").hidden = !!running; $("mon-stop").hidden = !running;
+  $("mon-start").disabled = !connected || stepBusy;
+  $("mon-tools").hidden = !running;
+  if (!r) { $("mon-status").textContent = connected ? "Ready. Records every reading the truck supports." : "Records every reading the truck supports. Connect first."; $("mon-saved").hidden = true; return; }
+  if (running) {
+    $("mon-status").textContent = `Recording ${r.catalog.length} readings · ${fmt(r.elapsed)} · ${r.count.toLocaleString()} samples (${r.rate} per second)`;
+    $("mon-status").className = "ok"; $("mon-saved").hidden = true;
+  } else {
+    $("mon-status").textContent = r.error || (r.saving ? "Saving…" : "Stopped.");
+    $("mon-status").className = r.error ? "bad" : "muted";
+    $("mon-saved").hidden = false;
+    $("mon-saved-text").textContent = `Saved ${fmt(r.elapsed)} of data in "${r.folder}".`;
+  }
+}
+
+$("mon-start").onclick = async () => {
+  try { await api("/api/monitor/start", {}); } catch (e) { $("mon-status").textContent = e.message; $("mon-status").className = "bad"; }
+  pollMonitor(); poll();
+};
+$("mon-stop").onclick = async () => { $("mon-stop").disabled = true; await api("/api/monitor/stop", {}).catch(() => {}); setTimeout(() => { $("mon-stop").disabled = false; }, 3000); };
+$("marker-add").onclick = async () => {
+  const text = $("marker-text").value.trim() || "Marker";
+  try { await api("/api/monitor/marker", { text }); $("marker-text").value = ""; pollMonitor(); } catch (e) { $("mon-status").textContent = e.message; }
+};
+$("marker-text").addEventListener("keydown", e => { if (e.key === "Enter") $("marker-add").click(); });
+$("window").onchange = () => { windowS = +$("window").value; saveLayout(); drawTiles(); };
+$("tile-add").onclick = () => { const k = $("tile-pick").value; if (!catalogEntry(k)) return; tiles = (tiles || []).concat(k); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
+$("tile-all").onclick = () => { tiles = mon.catalog.map(c => c.key); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
+$("tile-reset").onclick = () => { tiles = DEFAULT_TILES.filter(k => catalogEntry(k)); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
+$("mon-view").onclick = () => window.open(`/view?f=${encodeURIComponent(mon.folder + "/report.md")}`, "_blank");
+$("mon-open").onclick = () => api("/api/open", { folder: mon.folder });
+
+(async () => {
+  const saved = await api("/api/layout").catch(() => ({}));
+  if (saved.tiles && saved.tiles.length) tiles = saved.tiles;
+  if (saved.window) { windowS = saved.window; $("window").value = String(saved.window); }
+  let tab = "dash"; try { tab = localStorage.getItem("tab") || "dash"; } catch (e) {}
+  showTab(tab);
+  buildTiles(); renderPicker();
+  pollMonitor(); setInterval(pollMonitor, 1000);
+})();
 
 loadPorts();
 poll();

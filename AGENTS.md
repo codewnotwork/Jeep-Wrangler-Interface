@@ -34,6 +34,13 @@ runs every step below from buttons and saves each run in its own folder under
 `Documents/jeep-data`, with a "Make ZIP to send" button. Use the commands below only when
 you are running things for them yourself.
 
+The app's Dashboard tab records everything the truck answers and saves a folder named
+`monitor-<date>` with `report.md`, `report.json`, `log.csv` and `markers.json`. In
+`report.json`, `likely_causes` is the output of the offline rules in `troubleshoot.py`
+(each with `score`, `evidence`, `next_check`); treat it as a starting hypothesis and check
+it against `log.csv` yourself. `markers` are the owner's notes of what they changed and
+when, and `segments_between_markers` holds the averages before and after each one.
+
 ## Commands and what to read
 
 | Goal | Command | Read |

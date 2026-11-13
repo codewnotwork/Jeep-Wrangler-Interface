@@ -13,12 +13,36 @@ The OBD port is under the dash, left of the steering column.
 
 ## The easy way: the app
 
-Double-click **`Wrangler Diagnostics.pyw`** in this folder. It opens in your web browser
-with one button per step (connect, pedal map, record a drive, idle checks, transmission
-temperature, make a ZIP to send), a progress bar and a Stop button. No typing needed.
-Results are saved in `Documents\jeep-data`. If Windows asks which program to open the
-`.pyw` file with, double-click `Wrangler Diagnostics.bat` instead. To put it on the desktop,
-right-click the `.pyw` file and choose Send to > Desktop (create shortcut).
+Double-click **`Wrangler Diagnostics.pyw`** in this folder. It opens in your web browser.
+No typing needed. If Windows asks which program to open the `.pyw` file with, double-click
+`Wrangler Diagnostics.bat` instead. To put it on the desktop, right-click the `.pyw` file
+and choose Send to > Desktop (create shortcut).
+
+Press **Connect**, then use the **Dashboard** tab:
+
+- **Start monitoring** records every reading the truck answers (all supported standard
+  readings plus the Chrysler extras such as transmission temperature, when the truck
+  reports them) until you press **Stop and save**.
+- **Tiles**: pick a reading from the list and press Add tile. Each tile shows the current
+  value, the low and high, and a trend line. Drag tiles to rearrange them, press the x to
+  remove one. Your layout is remembered. The window selector sets how far back the trend
+  lines go (1 to 60 minutes).
+- **Markers**: type what you just changed ("A/C on", "cleaned throttle body") and press
+  Add marker. It shows as a line on every trend and the saved report compares the
+  readings before and after it.
+- **Likely causes**: while recording, the app checks combinations of readings against
+  known fault patterns for the 3.8L (vacuum leak, fuel delivery, thermostat, charging,
+  lazy oxygen sensor, catalyst, rough idle and more) and ranks what fits, each with the
+  evidence and the next thing to check. It is a pointer, not a verdict. It needs about
+  20 seconds of warm idle, and a few minutes of steady cruising to tell a vacuum leak
+  from a fuel delivery problem.
+- **Stop and save** writes a folder under `Documents\jeep-data` holding `report.md` and
+  `report.json` (written for an AI model or a mechanic to read: codes, statistics for every
+  reading, likely causes, before/after each marker), `log.csv` (every sample) and
+  `markers.json`.
+
+The **Guided steps** tab keeps the one-button procedures (pedal map, record a drive, idle
+checks, transmission temperature scan, make a ZIP to send).
 
 The app runs only on this computer (it is a small local web server, nothing is sent
 anywhere) and closes by itself a couple of minutes after its browser tab is closed. The
@@ -190,6 +214,8 @@ print(elm.read_dtcs())
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve
 - `app.py`, `app.html`: the point-and-click app (local web page)
+- `monitor.py`: background recorder behind the dashboard (all readings, markers, saved report)
+- `troubleshoot.py`: live fault-pattern rules that rank likely causes
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings
 - `report.py`: diagnostic report (JSON + Markdown) and log statistics
 - `simulator.py`: fake ELM327 + JK PCM that speaks the real text protocol
