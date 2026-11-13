@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wrangler Diagnostics</title>
+<style>
+  :root {
+    --bg: #f4f2ee; --card: #ffffff; --ink: #1f2328; --muted: #5d636b; --line: #dedad3;
+    --accent: #2f6b3a; --accent-ink: #ffffff; --accent-soft: #e4efe5;
+    --warn: #9a5b00; --warn-soft: #fbf0dc; --bad: #a23b2a; --bad-soft: #f8e3df;
+    --chip: #ece8e1; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17191c; --card: #212428; --ink: #e8e6e3; --muted: #a2a7ad; --line: #34383d;
+      --accent: #5aa66a; --accent-ink: #0f1a11; --accent-soft: #23362a;
+      --warn: #e0a54a; --warn-soft: #3a2f1c; --bad: #e57a66; --bad-soft: #3d2520; --chip: #2d3135;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--card); border-bottom: 1px solid var(--line);
+           padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  .pill { font-size: 14px; padding: 3px 10px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .pill.on { background: var(--accent-soft); color: var(--accent); }
+  .gauges { display: flex; gap: 18px; margin-left: auto; font-variant-numeric: tabular-nums; }
+  .gauge { text-align: right; }
+  .gauge b { display: block; font-size: 20px; line-height: 1.1; }
+  .gauge span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px; display: grid; gap: 20px;
+         grid-template-columns: minmax(0, 1fr) minmax(0, 420px); align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } .gauges { margin-left: 0; } }
+  .steps { display: grid; gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card h2 { font-size: 17px; margin: 0 0 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .num { width: 26px; height: 26px; border-radius: 50%; background: var(--chip); display: inline-grid;
+         place-items: center; font-size: 14px; flex: none; }
+  .done .num { background: var(--accent); color: var(--accent-ink); }
+  .when { font-size: 13px; font-weight: 500; padding: 2px 9px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+  .card p { margin: 6px 0 10px; color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .sub { border-top: 1px solid var(--line); padding: 10px 0 0; margin-top: 10px; }
+  .sub:first-of-type { border-top: 0; margin-top: 4px; }
+  .sub .label { flex: 1 1 220px; }
+  .result { font-size: 14px; color: var(--accent); }
+  .result.none { color: var(--muted); }
+  button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+           padding: 8px 16px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.link { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; }
+  select, input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
+                  background: var(--card); color: var(--ink); min-width: 0; }
+  input.notes { flex: 1 1 240px; }
+  .vehicle { font-size: 14px; color: var(--muted); margin-top: 8px; }
+  .vehicle b { color: var(--ink); font-weight: 600; }
+  .error { color: var(--bad); font-size: 14px; margin-top: 8px; }
+  aside { position: sticky; top: 84px; }
+  @media (max-width: 900px) { aside { position: static; } }
+  .bar { height: 10px; border-radius: 999px; background: var(--chip); overflow: hidden; margin: 10px 0 6px; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .6s linear; }
+  .bar.unknown > div { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+  .times { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 12px 0 0;
+            font: 13px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; }
+  .muted { color: var(--muted); }
+  .ok { color: var(--accent); } .bad { color: var(--bad); }
+  footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 30px; font-size: 14px; color: var(--muted);
+           display: flex; gap: 16px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wrangler Diagnostics</h1>
+  <span id="conn" class="pill">Not connected</span>
+  <div class="gauges" id="gauges" hidden>
+    <div class="gauge"><b id="g-rpm">–</b><span>RPM</span></div>
+    <div class="gauge"><b id="g-ect">–</b><span>Coolant °F</span></div>
+    <div class="gauge"><b id="g-spd">–</b><span>mph</span></div>
+    <div class="gauge"><b id="g-v">–</b><span>Volts</span></div>
+  </div>
+</header>
+
+<main>
+  <div class="steps">
+    <section class="card" id="step-connect">
+      <h2><span class="num">1</span>Connect <span class="when">Key on</span></h2>
+      <p>Plug the OBDLink into the port under the dash (left of the steering column) and into this laptop, then turn the key to ON.</p>
+      <div class="row">
+        <select id="port"></select>
+        <button id="refresh">Refresh list</button>
+        <button id="connect" class="primary">Connect</button>
+        <button id="disconnect" hidden>Disconnect</button>
+      </div>
+      <div class="vehicle" id="vehicle"></div>
+      <div class="error" id="connect-err"></div>
+    </section>
+
+    <section class="card" id="step-pedal">
+      <h2><span class="num">2</span>Pedal map <span class="when">Key on, engine off</span></h2>
+      <p>Takes 45 seconds. After pressing Start, slowly press the gas pedal to the floor and let it back up, about 10 seconds each way, until the time runs out. If the truck doesn't report the pedal, that's fine: skip to step 3.</p>
+      <div class="row"><button class="primary" data-step="pedal">Start pedal map</button><span class="result" data-result="pedal"></span></div>
+    </section>
+
+    <section class="card" id="step-drive">
+      <h2><span class="num">3</span>Record a drive <span class="when">Start the engine first</span></h2>
+      <p>Start the engine, press Start, then drive. Include a few minutes of idling, some town driving and some steady highway. Don't look at the laptop while driving: it stops on its own.</p>
+      <div class="row">
+        <label>Length <select id="minutes"><option>15</option><option selected>30</option><option>45</option><option>60</option></select> min</label>
+        <input class="notes" id="drive-notes" placeholder="Notes (optional): route, weather, anything you noticed">
+      </div>
+      <div class="row" style="margin-top:10px"><button class="primary" data-step="drive">Start recording</button><span class="result" data-result="drive"></span></div>
+    </section>
+
+    <section class="card" id="step-idle">
+      <h2><span class="num">4</span>Idle checks <span class="when">Engine warm, parked</span></h2>
+      <p>Right after the drive. Each one takes 3 minutes. Set the truck up as described, press Start, and keep your feet off the gas.</p>
+      <div class="sub row"><span class="label"><b>A.</b> In Park, A/C off, stereo off</span><span class="result" data-result="idle-1"></span><button class="primary" data-step="idle-1">Start</button></div>
+      <div class="sub row"><span class="label"><b>B.</b> In Drive, foot firmly on the brake</span><span class="result" data-result="idle-2"></span><button class="primary" data-step="idle-2">Start</button></div>
+      <div class="sub row"><span class="label"><b>C.</b> In Park, A/C on</span><span class="result" data-result="idle-3"></span><button class="primary" data-step="idle-3">Start</button></div>
+      <div class="sub row"><span class="label"><b>D.</b> In Park, stereo on loud</span><span class="result" data-result="idle-4"></span><button class="primary" data-step="idle-4">Start</button></div>
+    </section>
+
+    <section class="card" id="step-trans">
+      <h2><span class="num">5</span>Transmission temperature <span class="when">Key on, engine off</span></h2>
+      <p id="trans-text">Do the drive first. The drive report tries to read transmission temperature directly.</p>
+      <div id="trans-scans" hidden>
+        <div class="sub row"><span class="label"><b>Hot scan:</b> right after a drive, engine off, key on. About 1 to 2 minutes.</span><span class="result" data-result="scan-hot"></span><button class="primary" data-step="scan-hot">Start</button></div>
+        <div class="sub row"><span class="label"><b>Cold scan:</b> the next morning before driving, engine off, key on.</span><span class="result" data-result="scan-cold"></span><button class="primary" data-step="scan-cold">Start</button></div>
+      </div>
+    </section>
+
+    <section class="card" id="step-send">
+      <h2><span class="num">6</span>Send the results</h2>
+      <p>Makes one ZIP file of everything recorded and opens its folder. Attach that file in the Claude thread.</p>
+      <div class="row"><button class="primary" id="zip">Make ZIP to send</button><button id="open">Open data folder</button><span class="result" id="zip-result"></span></div>
+    </section>
+  </div>
+
+  <aside class="card" id="activity">
+    <h2 id="job-title">Activity</h2>
+    <div id="job-idle" class="muted">Nothing running. Pick a step on the left.</div>
+    <div id="job-box" hidden>
+      <div class="bar" id="bar"><div></div></div>
+      <div class="times"><span id="elapsed"></span><span id="remaining"></span></div>
+      <div class="row" style="margin-top:10px">
+        <button class="danger" id="stop">Stop</button>
+        <button id="job-open" hidden>Open folder</button>
+        <button id="job-view" hidden>View report</button>
+      </div>
+      <pre class="log" id="log"></pre>
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <span>Other tools:</span>
+  <button class="link" data-step="codes">Read trouble codes</button>
+  <button class="link" data-step="health">Quick health check (no drive)</button>
+  <span id="datadir"></span>
+  <button class="link" id="quit">Quit app</button>
+</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null, ports = [], lastStep = null;
+
+async function api(path, body) {
+  const opts = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function fmt(s) {
+  s = Math.max(0, Math.round(s));
+  const m = Math.floor(s / 60), r = s % 60;
+  return m ? `${m} min ${String(r).padStart(2, "0")} s` : `${r} s`;
+}
+
+async function loadPorts() {
+  ports = await api("/api/ports").catch(() => []);
+  const sel = $("port"), keep = sel.value;
+  sel.innerHTML = "";
+  for (const p of ports) {
+    const o = document.createElement("option");
+    o.value = p.device; o.textContent = `${p.device}  ${p.description}`;
+    sel.appendChild(o);
+  }
+  const sim = document.createElement("option");
+  sim.value = "sim"; sim.textContent = "Simulator (practice without the truck)";
+  sel.appendChild(sim);
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+  if (!ports.length) $("connect-err").textContent = "No adapter found. Plug it in, then press Refresh list.";
+  else $("connect-err").textContent = "";
+}
+
+function render() {
+  if (!state) return;
+  const busy = state.job && state.job.running;
+  const v = state.vehicle || {};
+  $("conn").textContent = state.connected ? (v.simulator ? "Simulator" : `Connected on ${state.port}`) : "Not connected";
+  $("conn").className = "pill" + (state.connected ? " on" : "");
+  $("gauges").hidden = !state.connected;
+  $("connect").hidden = state.connected; $("disconnect").hidden = !state.connected;
+  $("port").disabled = state.connected; $("refresh").disabled = state.connected;
+  $("step-connect").classList.toggle("done", state.connected);
+  $("vehicle").innerHTML = state.connected
+    ? `VIN <b>${v.vin || "not reported"}</b> · ${v.protocol} · battery <b>${v.battery ?? "?"} V</b> · check engine light <b>${v.mil_on ? "ON" : "off"}</b>${v.dtc_count ? ` (${v.dtc_count} code${v.dtc_count > 1 ? "s" : ""})` : ""}${v.simulator ? " · <b>simulated data</b>" : ""}`
+    : "";
+
+  document.querySelectorAll("[data-step]").forEach(b => { b.disabled = !state.connected || busy; });
+  document.querySelectorAll("[data-result]").forEach(el => {
+    const p = state.progress[el.dataset.result];
+    el.textContent = p ? `✓ ${p.when}${p.summary ? " · " + p.summary : ""}` : "";
+  });
+  const sections = { "step-pedal": ["pedal"], "step-drive": ["drive"], "step-idle": ["idle-1", "idle-2", "idle-3", "idle-4"], "step-trans": ["scan-cold"] };
+  for (const [id, steps] of Object.entries(sections)) $(id).classList.toggle("done", steps.every(s => state.progress[s]));
+
+  const t = state.trans_temp_found;
+  if (t === true) {
+    $("trans-text").textContent = "Found in your drive report, so nothing to do here.";
+    $("trans-scans").hidden = true; $("step-trans").classList.add("done");
+  } else if (t === false) {
+    $("trans-text").textContent = "Your drive report didn't include it, so we'll find it by comparing a hot scan with a cold scan.";
+    $("trans-scans").hidden = false;
+  } else {
+    $("trans-text").textContent = "Do the drive first. The drive report tries to read transmission temperature directly.";
+    $("trans-scans").hidden = true;
+  }
+  $("datadir").textContent = `Saved in ${state.data_dir}`;
+
+  const job = state.job;
+  $("job-idle").hidden = !!job; $("job-box").hidden = !job;
+  if (job) {
+    $("job-title").textContent = job.title;
+    const known = job.seconds && job.running;
+    $("bar").classList.toggle("unknown", !!job.running && !job.seconds);
+    $("bar").firstElementChild.style.width = job.running ? (job.seconds ? Math.min(100, job.elapsed / job.seconds * 100) + "%" : "") : "100%";
+    $("elapsed").textContent = job.running ? `Running for ${fmt(job.elapsed)}` : (job.ok ? "Finished" : "Did not finish");
+    $("elapsed").className = job.running ? "" : (job.ok ? "ok" : "bad");
+    $("remaining").textContent = known ? `about ${fmt(job.seconds - job.elapsed)} left` : "";
+    $("stop").hidden = !job.running;
+    $("job-open").hidden = job.running || !job.folder;
+    $("job-view").hidden = job.running || !job.folder;
+    const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+    log.textContent = job.log.join("\n");
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+}
+
+async function poll() {
+  try { state = await api("/api/state"); render(); } catch (e) { $("conn").textContent = "App stopped. Start it again."; $("conn").className = "pill"; }
+}
+
+async function pollLive() {
+  if (!state || !state.connected || (state.job && state.job.running)) return;
+  const r = await api("/api/live").catch(() => ({}));
+  if (r.rpm !== undefined) $("g-rpm").textContent = Math.round(r.rpm);
+  if (r.coolant_temp !== undefined) $("g-ect").textContent = Math.round(r.coolant_temp * 9 / 5 + 32);
+  if (r.speed !== undefined) $("g-spd").textContent = Math.round(r.speed * 0.621371);
+  if (r.module_voltage !== undefined) $("g-v").textContent = r.module_voltage.toFixed(1);
+}
+
+$("refresh").onclick = loadPorts;
+$("connect").onclick = async () => {
+  $("connect-err").textContent = ""; $("connect").disabled = true; $("connect").textContent = "Connecting…";
+  try { await api("/api/connect", { port: $("port").value }); }
+  catch (e) { $("connect-err").textContent = `${e.message}. Check the key is ON and the cable is plugged in, then try again.`; }
+  $("connect").disabled = false; $("connect").textContent = "Connect";
+  poll();
+};
+$("disconnect").onclick = async () => { await api("/api/disconnect", {}); poll(); };
+document.querySelectorAll("[data-step]").forEach(b => b.onclick = async () => {
+  const step = b.dataset.step, body = { step };
+  if (step === "drive") { body.minutes = $("minutes").value; body.notes = $("drive-notes").value; }
+  try { await api("/api/run", body); lastStep = step; } catch (e) { alertBox(e.message); }
+  poll();
+});
+$("stop").onclick = () => api("/api/stop", {}).then(poll);
+$("job-open").onclick = () => api("/api/open", { folder: state.job.folder });
+$("job-view").onclick = () => {
+  const f = state.job.folder, step = state.job.step;
+  const file = step.startsWith("idle") ? "idle-report.md" : step === "pedal" ? "pedal-map.md" : step.startsWith("scan") ? "scan.json" : "report.md";
+  window.open(`/view?f=${encodeURIComponent(f + "/" + file)}`, "_blank");
+};
+$("zip").onclick = async () => {
+  try { const r = await api("/api/zip", {}); $("zip-result").textContent = `Saved ${r.zip.split(/[\\/]/).pop()}`; }
+  catch (e) { $("zip-result").textContent = e.message; }
+};
+$("open").onclick = () => api("/api/open", {});
+$("quit").onclick = async () => {
+  if (state && state.job && state.job.running) { alertBox("A step is still running. Stop it first."); return; }
+  await api("/api/quit", {}).catch(() => {});
+  document.body.innerHTML = "<p style='padding:40px;font-size:18px'>Wrangler Diagnostics has closed. You can close this tab.</p>";
+};
+function alertBox(msg) { $("job-idle").hidden = false; $("job-idle").textContent = msg; $("job-idle").className = "bad"; }
+
+loadPorts();
+poll();
+setInterval(poll, 1000);
+setInterval(pollLive, 2500);
+</script>
+</body>
+</html>

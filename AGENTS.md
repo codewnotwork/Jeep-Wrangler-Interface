@@ -27,6 +27,13 @@ explain what you find in plain language.
 
 If it cannot connect: check the key is on, try another USB port, and pass `--baud 115200`.
 
+## The app
+
+The owner prefers not to type commands. Point them to `Wrangler Diagnostics.pyw`, which
+runs every step below from buttons and saves each run in its own folder under
+`Documents/jeep-data`, with a "Make ZIP to send" button. Use the commands below only when
+you are running things for them yourself.
+
 ## Commands and what to read
 
 | Goal | Command | Read |
