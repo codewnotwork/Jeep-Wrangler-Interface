@@ -54,7 +54,13 @@ def test_supported_bitmap():
 
 
 def test_monitor_status():
-    assert decode_monitor_status([0x83, 0x07, 0x65, 0x00]) == {"mil_on": True, "dtc_count": 3}
+    status = decode_monitor_status([0x83, 0x07, 0x65, 0x21])
+    assert status["mil_on"] is True and status["dtc_count"] == 3
+    monitors = {m["name"]: m["complete"] for m in status["monitors"]}
+    assert monitors == {
+        "Misfire": True, "Fuel system": True, "Comprehensive components": True,
+        "Catalyst": False, "Evaporative system": True, "Oxygen sensor": False, "Oxygen sensor heater": True,
+    }
 
 
 def test_imperial():
