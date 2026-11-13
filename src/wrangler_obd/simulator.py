@@ -27,6 +27,31 @@ class SimulatedVehicle:
         self.pending_dtcs = ["P0171"]
         self.permanent_dtcs = ["P0456"]
         self.mil_on = True
+        # Monitors this truck has (PID 01 byte C) and which are still incomplete (byte D).
+        self.monitors_available = 0x65  # catalyst, evap, O2 sensor, O2 heater
+        self.monitors_incomplete = 0x00
+        # Freeze frame captured when P0456 set: warm engine at a steady cruise.
+        self.freeze_dtc: str | None = "P0456"
+        self.freeze_values: dict[str, float] = {
+            "engine_load": 38, "coolant_temp": 91, "stft_b1": 1.6, "ltft_b1": 5.5,
+            "stft_b2": -0.8, "ltft_b2": 2.3, "map": 48, "rpm": 1850, "speed": 72,
+            "intake_temp": 27, "throttle": 22,
+        }
+        # Mode 06 on-board test results: (monitor id, test id, unit/scaling id, value, min, max).
+        self.test_results: list[tuple[int, int, int, int, int, int]] = [
+            (0x01, 0x01, 0x0B, 610, 0, 800),      # O2 B1S1 rich-to-lean threshold voltage
+            (0x21, 0x80, 0x20, 115, 0, 192),      # catalyst B1 ratio
+            (0x22, 0x80, 0x20, 98, 0, 192),       # catalyst B2 ratio
+            (0x3C, 0x80, 0xFE, 0xFFEC, 0x8000, 0xFFD8),  # EVAP 0.020" leak: failing
+            (0xA1, 0x0C, 0x24, 3, 0, 65535),      # misfire, all cylinders, this drive cycle
+            (0xA2, 0x0B, 0x24, 0, 0, 65535),
+            (0xA2, 0x0C, 0x24, 0, 0, 65535),
+            (0xA3, 0x0C, 0x24, 3, 0, 65535),      # cylinder 2 has a few misfires
+            (0xA4, 0x0C, 0x24, 0, 0, 65535),
+            (0xA5, 0x0C, 0x24, 0, 0, 65535),
+            (0xA6, 0x0C, 0x24, 0, 0, 65535),
+            (0xA7, 0x0C, 0x24, 0, 0, 65535),
+        ]
 
     def elapsed(self) -> float:
         return self._clock() - self._t0
@@ -63,6 +88,9 @@ class SimulatedVehicle:
             "baro": 99,
             "module_voltage": 14.2 + jitter(-0.05, 0.05),
             "ambient_temp": 18,
+            "dist_mil_on": 42,
+            "warmups_since_clear": 12,
+            "dist_since_clear": 310,
         }
 
 
@@ -86,8 +114,10 @@ def _encode(key: str, value: float) -> list[int]:
         return word(value * 100)
     if key.startswith("o2_"):
         return [clamp(value * 200), 0x80]
-    if key == "run_time":
+    if key in ("run_time", "dist_mil_on", "dist_since_clear"):
         return word(value)
+    if key == "warmups_since_clear":
+        return [clamp(value)]
     if key == "module_voltage":
         return word(value * 1000)
     raise KeyError(key)
@@ -108,7 +138,7 @@ class SimulatedTransport:
         self.spaces = True
         self.ignition_on = True
         self._pending = b""
-        self._supported = {p.pid for p in PIDS.values()} | {0x01}
+        self._supported = {p.pid for p in PIDS.values()} | {0x01, 0x03}
 
     # Transport protocol --------------------------------------------------
 
@@ -169,7 +199,9 @@ class SimulatedTransport:
                 return self._reply([0x41, pid, *bitmap.to_bytes(4, "big")])
             if pid == 0x01:
                 a = (0x80 if v.mil_on else 0) | len(v.stored_dtcs)
-                return self._reply([0x41, 0x01, a, 0x07, 0x65, 0x00])
+                return self._reply([0x41, 0x01, a, 0x07, v.monitors_available, v.monitors_incomplete])
+            if pid == 0x03:
+                return self._reply([0x41, 0x03, 0x02 if v.values()["coolant_temp"] > 40 else 0x01, 0x00])
             for key, p in PIDS.items():
                 if p.pid == pid:
                     return self._reply([0x41, pid, *_encode(key, v.values()[key])])
@@ -183,10 +215,54 @@ class SimulatedTransport:
         if mode == 0x04:
             v.stored_dtcs, v.pending_dtcs = [], []
             v.mil_on = False
+            v.freeze_dtc, v.freeze_values = None, {}
+            v.monitors_incomplete = v.monitors_available
+            v.test_results = []
             return "44"
+        if mode == 0x02 and len(cmd) == 6:
+            return self._freeze_frame(int(cmd[2:4], 16))
+        if mode == 0x06 and len(cmd) == 4:
+            return self._test_results(int(cmd[2:4], 16))
         if cmd == "0902":
             return self._reply([0x49, 0x02, 0x01, *DEFAULT_VIN.encode("ascii")])
         return "NO DATA"
+
+    @staticmethod
+    def _bitmap(base: int, ids: set[int]) -> list[int] | None:
+        """4-byte "supported" bitmap for ``base``, or None if nothing is at or above it."""
+        bitmap = 0
+        for i in ids:
+            if base < i <= base + 0x20:
+                bitmap |= 1 << (32 - (i - base))
+        if any(i > base + 0x20 for i in ids):
+            bitmap |= 1
+        if base and not bitmap:
+            return None
+        return list(bitmap.to_bytes(4, "big"))
+
+    def _freeze_frame(self, pid: int) -> str:
+        v = self.vehicle
+        ids = {PIDS[k].pid for k in v.freeze_values} | ({0x02} if v.freeze_dtc else set())
+        if pid % 0x20 == 0:
+            bitmap = self._bitmap(pid, ids)
+            return self._reply([0x42, pid, 0x00, *bitmap]) if bitmap else "NO DATA"
+        if pid == 0x02:
+            return self._reply([0x42, 0x02, 0x00, *(_encode_dtc(v.freeze_dtc) if v.freeze_dtc else [0, 0])])
+        for key, value in v.freeze_values.items():
+            if PIDS[key].pid == pid:
+                return self._reply([0x42, pid, 0x00, *_encode(key, value)])
+        return "NO DATA"
+
+    def _test_results(self, mid: int) -> str:
+        results = self.vehicle.test_results
+        if mid % 0x20 == 0:
+            bitmap = self._bitmap(mid, {r[0] for r in results})
+            return self._reply([0x46, mid, *bitmap]) if bitmap else "NO DATA"
+        payload = [0x46]
+        for m, tid, uas, value, lo, hi in results:
+            if m == mid:
+                payload += [m, tid, uas, value >> 8, value & 0xFF, lo >> 8, lo & 0xFF, hi >> 8, hi & 0xFF]
+        return self._reply(payload) if len(payload) > 1 else "NO DATA"
 
     def _at(self, cmd: str) -> str:
         if cmd in ("Z", "WS"):

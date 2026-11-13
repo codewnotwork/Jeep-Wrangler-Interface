@@ -63,7 +63,10 @@ _DEFS = [
     Pid(0x18, "o2_b2s1", "O2 sensor voltage, bank 2 sensor 1", "V", 2, _o2_volts),
     Pid(0x19, "o2_b2s2", "O2 sensor voltage, bank 2 sensor 2", "V", 2, _o2_volts),
     Pid(0x1F, "run_time", "Run time since engine start", "s", 2, lambda d: float(_word(d))),
+    Pid(0x21, "dist_mil_on", "Distance driven with check engine light on", "km", 2, lambda d: float(_word(d))),
     Pid(0x2F, "fuel_level", "Fuel tank level", "%", 1, _pct),
+    Pid(0x30, "warmups_since_clear", "Warm-ups since codes cleared", "count", 1, lambda d: float(d[0])),
+    Pid(0x31, "dist_since_clear", "Distance since codes cleared", "km", 2, lambda d: float(_word(d))),
     Pid(0x33, "baro", "Barometric pressure", "kPa", 1, lambda d: float(d[0])),
     Pid(0x42, "module_voltage", "Control module voltage", "V", 2, lambda d: _word(d) / 1000.0),
     Pid(0x46, "ambient_temp", "Ambient air temperature", "°C", 1, _temp),
@@ -88,9 +91,45 @@ def decode_supported(base: int, data: Sequence[int]) -> set[int]:
     return supported
 
 
+# Readiness monitors in PID 01 (spark ignition layout). (name, byte, bit):
+# the "available" bit; the matching "incomplete" bit is 4 higher in byte B,
+# or the same bit of byte D for the byte C monitors.
+_CONTINUOUS = [("Misfire", 0), ("Fuel system", 1), ("Comprehensive components", 2)]
+_NON_CONTINUOUS = [
+    ("Catalyst", 0), ("Heated catalyst", 1), ("Evaporative system", 2), ("Secondary air", 3),
+    ("A/C refrigerant", 4), ("Oxygen sensor", 5), ("Oxygen sensor heater", 6), ("EGR system", 7),
+]
+
+
 def decode_monitor_status(data: Sequence[int]) -> dict:
-    """Decode PID 01 (MIL status and stored DTC count)."""
-    return {"mil_on": bool(data[0] & 0x80), "dtc_count": data[0] & 0x7F}
+    """Decode PID 01: MIL status, stored DTC count and readiness monitors.
+
+    ``monitors`` lists only the monitors this vehicle has, each with
+    ``complete`` True/False. Clearing codes resets them all to incomplete.
+    """
+    a, b, c, d = data[:4]
+    monitors = []
+    for name, bit in _CONTINUOUS:
+        if b & (1 << bit):
+            monitors.append({"name": name, "complete": not b & (1 << (bit + 4))})
+    for name, bit in _NON_CONTINUOUS:
+        if c & (1 << bit):
+            monitors.append({"name": name, "complete": not d & (1 << bit)})
+    return {"mil_on": bool(a & 0x80), "dtc_count": a & 0x7F, "monitors": monitors}
+
+
+_FUEL_SYSTEM = {
+    0x01: "Open loop (engine not warm enough yet)",
+    0x02: "Closed loop (using O2 sensors)",
+    0x04: "Open loop (load or deceleration fuel cut)",
+    0x08: "Open loop (system fault)",
+    0x10: "Closed loop with a feedback fault",
+}
+
+
+def decode_fuel_system(data: Sequence[int]) -> str:
+    """Decode PID 03 byte A (fuel system 1 status)."""
+    return _FUEL_SYSTEM.get(data[0], f"Unknown (0x{data[0]:02X})")
 
 
 _IMPERIAL = {
@@ -98,6 +137,7 @@ _IMPERIAL = {
     "km/h": ("mph", lambda v: v * 0.621371),
     "kPa": ("psi", lambda v: v * 0.145038),
     "g/s": ("lb/min", lambda v: v * 0.132277),
+    "km": ("mi", lambda v: v * 0.621371),
 }
 
 

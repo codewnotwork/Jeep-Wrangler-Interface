@@ -6,7 +6,8 @@ import re
 from dataclasses import dataclass, field
 
 from . import dtc as dtc_mod
-from .pids import PIDS, Pid, decode_monitor_status, decode_supported
+from . import mode06
+from .pids import PIDS, PIDS_BY_NUMBER, Pid, decode_fuel_system, decode_monitor_status, decode_supported
 from .transport import Transport, TransportError
 
 _HEX_LINE = re.compile(r"^[0-9A-F]+$")
@@ -44,6 +45,14 @@ class Reading:
     @property
     def unit(self) -> str:
         return self.pid.unit
+
+
+@dataclass
+class FreezeFrame:
+    """Sensor values the PCM saved at the moment a trouble code set."""
+
+    dtc: str
+    readings: dict[str, Reading] = field(default_factory=dict)
 
 
 @dataclass
@@ -188,6 +197,63 @@ class Elm327:
             if len(m) >= 6 and m[1] == 0x01:
                 return decode_monitor_status(m[2:6])
         return None
+
+    def fuel_system_status(self) -> str | None:
+        """Whether the PCM is in open or closed loop fuel control (PID 03)."""
+        if 0x03 not in self.supported_pids():
+            return None
+        for m in self._service_response("0103"):
+            if len(m) >= 3 and m[1] == 0x03:
+                return decode_fuel_system(m[2:])
+        return None
+
+    # -- Mode 02: freeze frame -------------------------------------------
+
+    def _supported_ids(self, prefix: str, suffix: str, skip: int) -> set[int]:
+        """Walk the "supported" bitmaps of a service (ids 00, 20, 40 ...)."""
+        mode = int(prefix, 16)
+        supported: set[int] = set()
+        base = 0x00
+        while base <= 0xE0:
+            found = False
+            for m in self._service_response(f"{prefix}{base:02X}{suffix}"):
+                if len(m) >= skip + 4 and m[0] == mode + 0x40 and m[1] == base:
+                    supported |= decode_supported(base, m[skip : skip + 4])
+                    found = True
+            if not found or base + 0x20 not in supported:
+                break
+            base += 0x20
+        return supported
+
+    def freeze_frame(self) -> FreezeFrame | None:
+        """Read freeze frame 0. Returns None when no frame is stored."""
+        dtc = None
+        for m in self._service_response("020200"):
+            if len(m) >= 5 and m[1] == 0x02:
+                dtc = dtc_mod.decode_dtc(m[3], m[4])
+        if dtc is None:
+            return None
+        frame = FreezeFrame(dtc)
+        for number in sorted(self._supported_ids("02", "00", skip=3)):
+            pid = PIDS_BY_NUMBER.get(number)
+            if pid is None:
+                continue
+            for m in self._service_response(f"02{number:02X}00"):
+                if len(m) >= 3 + pid.nbytes and m[1] == number:
+                    frame.readings[pid.key] = Reading(pid, pid.decode(m[3 : 3 + pid.nbytes]))
+        return frame
+
+    # -- Mode 06: on-board test results ----------------------------------
+
+    def test_results(self) -> list[mode06.TestResult]:
+        """Read every on-board monitoring test result the PCM reports."""
+        results: list[mode06.TestResult] = []
+        for mid in sorted(self._supported_ids("06", "", skip=2)):
+            if mid % 0x20 == 0:
+                continue
+            for m in self._service_response(f"06{mid:02X}"):
+                results.extend(r for r in mode06.decode_test_results(m[1:]) if r.mid == mid)
+        return results
 
     # -- DTCs ------------------------------------------------------------
 
