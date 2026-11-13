@@ -112,7 +112,8 @@ class Monitor:
                     values = {k: r.value for k, r in self.elm.read_pids(wanted).items()}
                     if found and self.count % EXTRAS_EVERY == 0:
                         values.update(self._read_extras(found))
-                    t = tick - self.started
+                    # Rounded once here, so the time a browser sends back as "since" matches exactly.
+                    t = round(tick - self.started, 3)
                     with self._lock:
                         self.samples.append((t, values))
                     stamp = datetime.fromtimestamp(tick, tz=timezone.utc).isoformat(timespec="milliseconds")
@@ -157,7 +158,7 @@ class Monitor:
         step = max(1, len(data) // max_points)
         out = []
         for t, values in data[::step]:
-            out.append([round(t, 2), {k: round(to_imperial(v, units.get(k, ""))[0], 3) for k, v in values.items()}])
+            out.append([t, {k: round(to_imperial(v, units.get(k, ""))[0], 3) for k, v in values.items()}])
         duration = (self.finished or time.time()) - self.started
         return {
             "running": self.running, "saving": self.saving, "error": self.error,
