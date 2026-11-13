@@ -13,7 +13,7 @@ import statistics
 from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
-from . import __version__, alerts
+from . import __version__, alerts, extras
 from . import dtc as dtc_mod
 from .elm327 import Elm327
 from .pids import PIDS
@@ -166,6 +166,7 @@ def build_report(
         },
         "fuel_system_status": elm.fuel_system_status(),
         "snapshot": {k: {"value": _round(r.value), "unit": r.unit, "name": r.pid.name} for k, r in snapshot.items()},
+        "manufacturer_readings": extras.probe(elm),
         "onboard_tests": [t.as_dict() for t in tests],
         "findings": findings,
     }
@@ -261,6 +262,15 @@ def to_markdown(report: dict) -> str:
 
     out += ["", "## Snapshot of live data", ""]
     out += _table(["Reading", "Value"], [[x["name"], f"{x['value']} {x['unit']}"] for x in report["snapshot"].values()])
+
+    if report.get("manufacturer_readings"):
+        out += ["", "## Manufacturer readings", "",
+                "From Chrysler-specific requests. Unconfirmed ones have not been checked against the truck "
+                "by an independent measurement, so treat them with caution.", ""]
+        out += _table(["Reading", "Value", "Request", "Confirmed"], [
+            [x["name"], f"{x['value']} {x['unit']}", x["request"], "yes" if x["confirmed"] else "no"]
+            for x in report["manufacturer_readings"]
+        ])
 
     log = report.get("log")
     if log and log.get("samples"):

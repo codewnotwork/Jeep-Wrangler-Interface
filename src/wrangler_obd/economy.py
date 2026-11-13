@@ -50,7 +50,10 @@ def fuel_flow_lph(values: Mapping[str, float], fuel_factor: float = 1.0) -> floa
     air = air_flow_gps(values)
     if air is None:
         return None
-    return air / AIR_FUEL_RATIO / FUEL_DENSITY_G_PER_L * 3600.0 * fuel_factor
+    # Use the mixture the PCM says it is commanding when it reports one
+    # (1.0 is the ideal mixture, below 1.0 is richer).
+    lam = values.get("lambda_cmd") or 1.0
+    return air / (AIR_FUEL_RATIO * lam) / FUEL_DENSITY_G_PER_L * 3600.0 * fuel_factor
 
 
 def tire_speed_factor(actual_in: float, calibrated_in: float) -> float:

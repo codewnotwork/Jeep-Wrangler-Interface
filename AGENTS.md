@@ -53,6 +53,9 @@ Report numbers are metric. Convert for the owner (°F, mph, psi).
    - **Rhythm.** Evenly spaced dips suggest something cycling (EVAP purge, A/C clutch, fan).
    - **Bank.** Bank 1 holds cylinder 1 (the odd cylinders), bank 2 the even ones. One
      upstream O2 sensor going lean at each dip, or long term trims that differ between banks.
+   - **EVAP purge and EGR.** Purge stepping at each dip points at the purge valve or a
+     saturated canister. Any commanded EGR at idle, or dips with EGR closed that clear up
+     when the EGR valve is unplugged, points at a leaking EGR valve (common on the 3.8L).
    - **Fuel trims.** Lean at idle but normal at cruise (compare with a `report` drive)
      suggests a vacuum leak. Lean everywhere suggests fuel delivery or the MAP sensor.
    - **Voltage** sagging at the dips suggests electrical load or charging.
@@ -63,8 +66,12 @@ Report numbers are metric. Convert for the owner (°F, mph, psi).
 
 ## Playbook: finding transmission temperature
 
-Chrysler does not publish where this reading lives, and no identifier in this repo is
-confirmed for this truck. Find it on the truck:
+`report` already tries three known variants (see `extras.py`, from the OBDb signal set) and
+lists any that answer under "Manufacturer readings". If one answers, confirm it: it should
+read near ambient after sitting overnight and 70-95 °C after a drive. Then set
+`confirmed=True` on that entry and delete the variants that did not answer.
+
+If none answers, find it on the truck:
 
 1. Cold (sat overnight), key on, engine off: `scan --out scans/cold.json --label cold`.
 2. After a 30 minute drive, key on, engine off: `scan --out scans/hot.json --label hot --compare scans/cold.json`.

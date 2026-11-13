@@ -98,7 +98,7 @@ wrangler-obd --port COM3 idle --out idle-baseline --notes "Park, A/C off, stereo
 
 For a stumble at idle that is too small to see on the tach. It samples RPM, short term
 fuel trims, upstream O2 sensors, manifold pressure, spark timing and voltage several
-times a second for three minutes, then reports each RPM dip with what the other readings
+times a second for three minutes, along with commanded EVAP purge and EGR, then reports each RPM dip with what the other readings
 did at that moment, whether the dips come at a regular rhythm, and how many new misfires
 the PCM counted per cylinder during the run. Output is `idle-report.md`,
 `idle-report.json` and `idle-log.csv`.
@@ -108,11 +108,18 @@ one thing at a time (in Drive with the brake held, A/C on, stereo on) and compar
 A very brief dip can fall between samples, so the PCM's misfire counters are the more
 reliable evidence when the two disagree.
 
-### Transmission temperature and other hidden data
+### Transmission temperature and other manufacturer readings
 
-Chrysler does not publish where transmission fluid temperature lives, and no identifier
-has been confirmed for this truck yet. `scan` finds it on the truck itself by asking the
-transmission module for every item it has (read-only):
+Every `report` also tries a short list of Chrysler-specific requests and includes any the
+truck answers under "Manufacturer readings": transmission fluid temperature (three known
+variants), engine oil temperature and pressure, knock sensors and injector pulse widths.
+The identifiers come from the community [OBDb Wrangler JK signal set](https://github.com/OBDb/Jeep-Wrangler-JK)
+(CC BY-SA 4.0). That set spans every JK engine and year and its own test data shows a
+2010 truck rejecting some of them, so each is marked unconfirmed until checked on this
+truck. The list is in `extras.py`.
+
+If none of the transmission variants answers, `scan` can find the reading on the truck
+itself by asking the transmission module for every item it has (read-only):
 
 ```bash
 wrangler-obd --port COM3 scan --out cold.json --label "cold, sat overnight"
@@ -166,6 +173,7 @@ print(elm.read_dtcs())
 - `mode06.py`: on-board test result decoding (monitor names, unit scaling)
 - `idle.py`: idle check (RPM dip detection, misfire counter change)
 - `economy.py`: fuel use and mpg estimate from MAP, RPM and intake temperature
+- `extras.py`: Chrysler-specific readings to try (from the OBDb signal set)
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings

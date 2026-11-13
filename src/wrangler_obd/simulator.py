@@ -103,6 +103,14 @@ class SimulatedVehicle:
             "baro": 99,
             "module_voltage": 14.2 + jitter(-0.05, 0.05),
             "ambient_temp": 18,
+            "egr_cmd": 0.0 if driving < 0.2 else 12.0,
+            "egr_err": 0.0,
+            # Purge valve opens for a second just before each stumble.
+            "evap_purge": 30.0 if self.stumble and 2.0 <= t % self.STUMBLE_EVERY < 3.4 else 8.0,
+            "cat_temp_b1": min(520.0, 20 + t * 4),
+            "cat_temp_b2": min(505.0, 20 + t * 4),
+            "load_abs": 18 + driving * 40,
+            "lambda_cmd": 1.0,
             "throttle_relative": throttle - 14,
             "throttle_b": throttle,
             "throttle_commanded": throttle,
@@ -120,11 +128,17 @@ def _encode(key: str, value: float) -> list[int]:
     """Inverse of the decoders in pids.py."""
     clamp = lambda v, hi=255: max(0, min(hi, int(round(v))))  # noqa: E731
     word = lambda v: [clamp(v, 0xFFFF) >> 8, clamp(v, 0xFFFF) & 0xFF]  # noqa: E731
-    if key in ("engine_load", "throttle", "fuel_level") or key.startswith(("throttle_", "pedal_")):
+    if key in ("engine_load", "throttle", "fuel_level", "egr_cmd", "evap_purge") or key.startswith(("throttle_", "pedal_")):
         return [clamp(value * 255 / 100)]
     if key in ("coolant_temp", "intake_temp", "ambient_temp"):
         return [clamp(value + 40)]
-    if key.startswith(("stft", "ltft")):
+    if key.startswith("cat_temp"):
+        return word((value + 40) * 10)
+    if key == "load_abs":
+        return word(value * 255 / 100)
+    if key == "lambda_cmd":
+        return word(value * 32768)
+    if key.startswith(("stft", "ltft")) or key == "egr_err":
         return [clamp(value * 128 / 100 + 128)]
     if key in ("map", "speed", "baro"):
         return [clamp(value)]
@@ -294,9 +308,10 @@ class SimulatedTransport:
         return self._reply(payload) if len(payload) > 1 else "NO DATA"
 
     def _manufacturer_data(self, service: int, rest: str) -> str:
-        """Made-up manufacturer data so the scan command can be exercised.
+        """Manufacturer data laid out like the OBDb Wrangler JK signal set.
 
-        The identifiers here are invented. They are NOT the real Jeep ones.
+        Enough to exercise ``scan`` and ``extras``. Whether a real 2010 truck
+        answers these is not known until it is tried.
         """
         digits = 2 if service == 0x21 else 4
         if len(rest) == digits + 1:
@@ -307,10 +322,13 @@ class SimulatedTransport:
         v = self.vehicle
         coolant = v.values()["coolant_temp"]
         items: dict[tuple[int, int, int], list[int]] = {
-            (0x7E1, 0x21, 0x30): [int(coolant * 0.9) + 40],            # a fluid temperature
-            (0x7E1, 0x21, 0x31): [0x03],                               # a gear number
-            (0x7E1, 0x22, 0x1234): list(int(coolant * 0.9 * 10).to_bytes(2, "big")),
-            (0x7E0, 0x21, 0x10): [0x55, 0xAA],
+            # Transmission fluid temperature is byte 11, offset 50.
+            (0x7E1, 0x21, 0x30): [0] * 11 + [int(coolant * 0.9) + 50],
+            (0x7E1, 0x21, 0x31): [0x03],                               # something that does not change
+            (0x7E1, 0x22, 0x04FE): [int(coolant * 0.9) + 40],
+            # Engine oil temperature is byte 7: value * 9/5 - 83 °F.
+            (0x7E0, 0x21, 0x2D): [0] * 7 + [int((coolant * 1.8 + 32 + 83) * 5 / 9)],
+            (0x7E0, 0x22, 0x022A): [69],                               # oil pressure, 40 psi
         }
         data = items.get((self.header, service, ident))
         if data is None:

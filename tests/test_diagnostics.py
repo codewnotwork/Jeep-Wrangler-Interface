@@ -190,8 +190,8 @@ def test_read_manufacturer_data_and_restore_broadcast(elm):
 
     with elm.ecu(TRANSMISSION):
         assert elm.transport.header == 0x7E1
-        assert elm.read_data(0x21, 0x30) == [58]  # 20 °C * 0.9 + 40
-        assert elm.read_data(0x22, 0x1234) == [0x00, 0xB4]
+        assert elm.read_data(0x21, 0x30) == [0] * 11 + [68]  # multi-frame; 20 °C * 0.9 + 50
+        assert elm.read_data(0x22, 0x04FE) == [58]
         assert elm.read_data(0x22, 0x9999) is None  # negative response
     assert elm.transport.header == 0x7DF
     assert elm.read_pid("rpm") is not None
@@ -202,17 +202,17 @@ def test_read_manufacturer_data_and_restore_broadcast(elm):
 def test_scan_and_compare(elm, clock):
     from wrangler_obd import scan
 
-    ranges = [(0x21, 0x00, 0xFF), (0x22, 0x1200, 0x12FF)]
+    ranges = [(0x21, 0x00, 0xFF), (0x22, 0x0400, 0x04FF)]
     cold = scan.run(elm, "trans", ranges, label="cold")
-    assert cold["items"] == {"21:30": "3A", "21:31": "03", "22:1234": "00B4"}
+    assert cold["items"] == {"21:30": "00" * 11 + "44", "21:31": "03", "22:04FE": "3A"}
     assert cold["complete"] and cold["engine_readings_at_start"]["coolant_temp"] == 20
     assert elm.fast is False and elm.transport.header == 0x7DF
     clock.t = 200
     hot = scan.run(elm, "trans", ranges, label="hot")
     changed = scan.compare(cold, hot)
-    assert [c["item"] for c in changed] == ["21:30", "22:1234"]  # the gear number did not change
-    assert changed[0]["before_number"] == 58 and changed[0]["after_number"] == 126
-    assert scan.run(elm, "engine", [(0x21, 0x00, 0x20)])["items"] == {"21:10": "55AA"}
+    assert [c["item"] for c in changed] == ["21:30", "22:04FE"]  # 21:31 did not change
+    assert changed[1]["before_number"] == 58 and changed[1]["after_number"] == 126
+    assert list(scan.run(elm, "engine", [(0x21, 0x00, 0x40)])["items"]) == ["21:2D"]
 
 
 def test_pedal_map():
@@ -237,10 +237,10 @@ def test_pedal_map():
 def test_cli_scan_and_pedal(tmp_path, capsys):
     first, second = str(tmp_path / "a.json"), str(tmp_path / "b.json")
     assert main(["--sim", "scan", "--out", first, "--label", "cold"]) == 0
-    assert main(["--sim", "scan", "--out", second, "--service", "22", "--start", "1230", "--end", "1240",
+    assert main(["--sim", "scan", "--out", second, "--service", "22", "--start", "04F0", "--end", "0500",
                  "--compare", first]) == 0
     assert json.loads((tmp_path / "a.json").read_text())["items"].keys() == {"21:30", "21:31"}
-    assert json.loads((tmp_path / "b.json").read_text())["items"].keys() == {"22:1234"}
+    assert json.loads((tmp_path / "b.json").read_text())["items"].keys() == {"22:04FE"}
     assert main(["--sim", "pedal", "--out", str(tmp_path / "p"), "--duration", "0.3"]) == 0
     assert (tmp_path / "p" / "pedal-map.md").exists()
     assert "Saved pedal-map.md" in capsys.readouterr().out
@@ -277,3 +277,43 @@ def test_cli_report_fuel_economy(tmp_path):
     data = json.loads((out / "report.json").read_text(encoding="utf-8"))
     assert data["fuel_economy"]["speed_factor"] == 1.0312
     assert "## Fuel economy (estimate)" in (out / "report.md").read_text(encoding="utf-8")
+
+
+def test_manufacturer_readings(elm, clock):
+    from wrangler_obd import extras
+
+    clock.t = 200  # warm: coolant 96 °C, simulated fluids at 86 °C
+    found = {x["key"]: x for x in extras.probe(elm)}
+    assert set(found) == {"trans_temp", "trans_temp_04fe", "oil_temp", "oil_pressure"}
+    assert found["trans_temp"]["value"] == 86 and found["trans_temp"]["request"] == "7E1 2130"
+    assert found["trans_temp_04fe"]["value"] == 86
+    assert found["oil_temp"]["value"] == pytest.approx(96, abs=1.5)
+    assert found["oil_pressure"]["value"] == pytest.approx(40 * 6.894757, abs=1)
+    assert not any(x["confirmed"] for x in found.values())
+    assert elm.transport.header == 0x7DF
+    md = report.to_markdown(report.build_report(elm))
+    assert "## Manufacturer readings" in md and "Transmission fluid temperature" in md
+    # An answer that decodes to nonsense is dropped, not reported.
+    assert extras.EXTRAS[0].decode([0] * 11 + [255]) is None
+    assert extras.EXTRAS[0].decode([0, 1]) is None
+
+
+def test_new_standard_pids(elm, clock):
+    clock.t = 200
+    r = elm.read_pids(["egr_cmd", "egr_err", "evap_purge", "cat_temp_b1", "load_abs", "lambda_cmd"])
+    assert r["lambda_cmd"].value == 1.0
+    assert r["cat_temp_b1"].value == pytest.approx(520, abs=0.1)
+    assert r["egr_err"].value == 0 and r["evap_purge"].value in (pytest.approx(8, abs=0.5), pytest.approx(30, abs=0.5))
+
+
+def test_idle_check_flags_purge():
+    a = _idle_run(stumble=True)
+    assert a["dips"]["mean_change_at_dip"]["evap_purge"] > 5
+    assert any("EVAP purge" in n for n in a["verdict"])
+
+
+def test_fuel_flow_uses_commanded_mixture():
+    from wrangler_obd import economy
+
+    base = {"rpm": 3000.0, "map": 90.0, "intake_temp": 25.0}
+    assert economy.fuel_flow_lph({**base, "lambda_cmd": 0.85}) == pytest.approx(economy.fuel_flow_lph(base) / 0.85)

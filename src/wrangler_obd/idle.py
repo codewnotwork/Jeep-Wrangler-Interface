@@ -19,7 +19,10 @@ from .logger import CsvLogger
 from .pids import PIDS
 
 #: Read on every pass, so a short dip is not missed.
-FAST_PIDS = ["rpm", "stft_b1", "stft_b2", "o2_b1s1", "o2_b2s1", "map", "timing_advance", "module_voltage"]
+FAST_PIDS = [
+    "rpm", "stft_b1", "stft_b2", "o2_b1s1", "o2_b2s1", "map", "timing_advance", "module_voltage",
+    "evap_purge", "egr_cmd",
+]
 #: Slow-moving context, read on every SLOW_EVERY-th pass to keep the sample rate up.
 SLOW_PIDS = ["engine_load", "ltft_b1", "ltft_b2", "coolant_temp", "throttle", "speed"]
 SLOW_EVERY = 10
@@ -27,7 +30,9 @@ IDLE_PIDS = FAST_PIDS + SLOW_PIDS
 
 DIP_RPM = 25.0  #: a sample this far below the local median counts as a dip
 WINDOW_S = 10.0  #: width of the window used for the local median
-CONTEXT = ("stft_b1", "stft_b2", "o2_b1s1", "o2_b2s1", "map", "timing_advance", "module_voltage")
+CONTEXT = (
+    "stft_b1", "stft_b2", "o2_b1s1", "o2_b2s1", "map", "timing_advance", "module_voltage", "evap_purge", "egr_cmd",
+)
 
 Sample = tuple[float, dict[str, float]]
 
@@ -114,7 +119,8 @@ def analyze(
         "min": round(min(rpm), 1), "max": round(max(rpm), 1),
     }
     conditions = {}
-    for key in ("coolant_temp", "speed", "throttle", "map", "module_voltage", "ltft_b1", "ltft_b2", "stft_b1", "stft_b2"):
+    for key in ("coolant_temp", "speed", "throttle", "map", "module_voltage", "ltft_b1", "ltft_b2", "stft_b1", "stft_b2",
+                "evap_purge", "egr_cmd"):
         vals = [v[key] for _, v in rows if key in v]
         if vals:
             conditions[key] = {
@@ -194,11 +200,22 @@ def _verdict(a: dict, baro_kpa: float | None) -> list[str]:
         volts = change.get("module_voltage")
         if volts is not None and volts <= -0.3:
             notes.append(f"System voltage sags {abs(volts):.2f} V at the dips: look at electrical load and charging.")
+        purge = change.get("evap_purge")
+        if purge is not None and abs(purge) >= 5:
+            notes.append(
+                f"Commanded EVAP purge is {purge:+.0f}% from its usual level at the dips: the purge valve "
+                "or the vapor it draws in is a suspect."
+            )
         b1, b2 = change.get("o2_b1s1"), change.get("o2_b2s1")
         if b1 is not None and b2 is not None and abs(b1 - b2) >= 0.15:
             bank = "1 (cylinders 1, 3, 5)" if b1 < b2 else "2 (cylinders 2, 4, 6)"
             notes.append(f"The upstream O2 sensor on bank {bank} reads leaner at the dips, pointing at that bank.")
 
+    if cond.get("egr_cmd", {}).get("max", 0) > 2:
+        notes.append(
+            f"The PCM commanded EGR up to {cond['egr_cmd']['max']:.0f}% during the capture. EGR should be "
+            "closed at idle, and a valve that leaks or sticks open causes exactly this kind of stumble."
+        )
     for name, c in a.get("misfire_counters", {}).items():
         if c["new"]:
             notes.append(f"{name}: the PCM counted {c['new']:.0f} new misfire(s) during the capture.")
