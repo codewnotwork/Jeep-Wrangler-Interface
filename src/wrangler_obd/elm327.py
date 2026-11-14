@@ -19,6 +19,9 @@ _BYTE_COUNT = re.compile(r"^[0-9A-F]{3}$")
 _NO_DATA = {"NODATA", "SEARCHING...", "STOPPED", "?"}
 _ERRORS = ("UNABLETOCONNECT", "BUSERROR", "CANERROR", "BUSINIT:...ERROR", "FBERROR", "DATAERROR", "BUFFERFULL")
 
+#: Protocol settings tried in order by ``connect``: automatic, then each CAN variant.
+CONNECT_PROTOCOLS = ("0", "6", "7", "8", "9")
+
 PROTOCOLS = {
     "0": "Automatic",
     "1": "SAE J1850 PWM",
@@ -159,13 +162,33 @@ class Elm327:
     def connect(self) -> None:
         """Reset the adapter and configure it for parsing, then find the protocol."""
         self.version = self.command("ATZ", timeout=max(self.timeout, 5.0)).splitlines()[-1].strip()
-        for cmd in ("ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"):
+        # ATD undoes settings another OBD program may have left behind (not stored).
+        for cmd in ("ATD", "ATE0", "ATL0", "ATS0", "ATH0"):
             reply = self.command(cmd)
             if "OK" not in reply:
                 raise ElmError(f"adapter rejected {cmd}: {reply!r}")
-        # 0100 forces protocol detection; the first one can take several seconds.
-        if not self._service_response("0100", timeout=max(self.timeout, 10.0)):
-            raise ElmError("vehicle did not answer. Is the ignition on?")
+        # Automatic search first, then the CAN settings one by one: some adapters
+        # give up on the automatic search with UNABLE TO CONNECT even though the
+        # truck answers on a fixed setting. 6 (11-bit, 500k) is the 2010 JK's.
+        last = ""
+        for proto in CONNECT_PROTOCOLS:
+            reply = self.command(f"ATSP{proto}")
+            if "OK" not in reply:
+                raise ElmError(f"adapter rejected ATSP{proto}: {reply!r}")
+            try:
+                # 0100 forces protocol detection; the first one can take several seconds.
+                if self._service_response("0100", timeout=max(self.timeout, 10.0)):
+                    break
+                last = "no reply"
+            except ElmError as exc:
+                last = str(exc)
+        else:
+            volts = self.battery_voltage()
+            power = f" The adapter reads {volts:.1f} V at the plug." if volts else ""
+            raise ElmError(
+                f"the adapter works but the engine computer did not answer ({last}).{power} "
+                "Turn the key to ON or start the engine, push the plug firmly into the port"
+            )
         code = self.command("ATDPN").lstrip("A")
         self.protocol = PROTOCOLS.get(code, f"unknown ({code})")
 
