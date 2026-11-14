@@ -170,23 +170,32 @@ class Elm327:
         # Automatic search first, then the CAN settings one by one: some adapters
         # give up on the automatic search with UNABLE TO CONNECT even though the
         # truck answers on a fixed setting. 6 (11-bit, 500k) is the 2010 JK's.
-        last = ""
+        tried = []
         for proto in CONNECT_PROTOCOLS:
             reply = self.command(f"ATSP{proto}")
             if "OK" not in reply:
                 raise ElmError(f"adapter rejected ATSP{proto}: {reply!r}")
+            # 0100 forces protocol detection; the first one can take several seconds.
+            raw = self.command("0100", timeout=max(self.timeout, 10.0))
             try:
-                # 0100 forces protocol detection; the first one can take several seconds.
-                if self._service_response("0100", timeout=max(self.timeout, 10.0)):
+                if any(m and m[0] == 0x41 for m in parse_response(raw)):
                     break
-                last = "no reply"
-            except ElmError as exc:
-                last = str(exc)
+            except ElmError:
+                pass
+            text = " ".join(raw.split())[:40] or "nothing"
+            tried.append(f"{'auto' if proto == '0' else proto}: {text}")
         else:
+            # One more data point for diagnosis: ask the engine computer by its own address.
+            self.command("ATSP6")
+            self.command("ATSH7E0")
+            raw = self.command("0100", timeout=max(self.timeout, 10.0))
+            self.command("ATSH7DF")
+            tried.append("6 to 7E0: " + (" ".join(raw.split())[:40] or "nothing"))
             volts = self.battery_voltage()
             power = f" The adapter reads {volts:.1f} V at the plug." if volts else ""
             raise ElmError(
-                f"the adapter works but the engine computer did not answer ({last}).{power} "
+                f"the adapter works but the engine computer did not answer. "
+                f"Adapter replies: {'; '.join(tried)}.{power} "
                 "Turn the key to ON or start the engine, push the plug firmly into the port"
             )
         code = self.command("ATDPN").lstrip("A")
