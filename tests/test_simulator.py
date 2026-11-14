@@ -72,6 +72,22 @@ def test_ignition_off_fails_cleanly():
         Elm327(t).connect()
 
 
+def test_ignition_off_message_is_helpful():
+    t = SimulatedTransport()
+    t.ignition_on = False
+    with pytest.raises(ElmError, match="engine computer did not answer.*V at the plug"):
+        Elm327(t).connect()
+
+
+def test_falls_back_to_fixed_can_protocol():
+    t = SimulatedTransport()
+    t.auto_search_fails = True
+    e = Elm327(t)
+    e.connect()
+    assert t.protocol == "6"
+    assert e.read_pid("rpm") is not None
+
+
 def test_battery_voltage(elm):
     assert 13 < elm.battery_voltage() < 15
 

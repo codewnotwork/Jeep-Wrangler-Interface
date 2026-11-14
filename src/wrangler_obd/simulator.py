@@ -173,6 +173,9 @@ class SimulatedTransport:
         self.echo = True
         self.spaces = True
         self.ignition_on = True
+        #: Mimic an adapter whose automatic protocol search fails on this truck.
+        self.auto_search_fails = False
+        self.protocol = "0"
         self._pending = b""
         self.header = 0x7DF
         self._supported = {p.pid for p in PIDS.values()} | {0x01, 0x03}
@@ -215,7 +218,7 @@ class SimulatedTransport:
     def _handle(self, cmd: str) -> str:
         if cmd.startswith("AT"):
             return self._at(cmd[2:])
-        if not self.ignition_on:
+        if not self.ignition_on or (self.auto_search_fails and self.protocol == "0"):
             return "UNABLE TO CONNECT"
         try:
             mode = int(cmd[:2], 16)
@@ -342,6 +345,8 @@ class SimulatedTransport:
             return "\r\rELM327 v1.5"
         if cmd == "I":
             return "ELM327 v1.5"
+        if cmd == "D":
+            return "OK"
         if cmd in ("E0", "E1"):
             self.echo = cmd == "E1"
             return "OK"
@@ -351,7 +356,10 @@ class SimulatedTransport:
         if cmd.startswith("SH"):
             self.header = int(cmd[2:], 16)
             return "OK"
-        if cmd in ("L0", "L1", "H0", "H1") or cmd.startswith("SP") or cmd.startswith("ST"):
+        if cmd.startswith("SP"):
+            self.protocol = cmd[2:].lstrip("A") or "0"
+            return "OK"
+        if cmd in ("L0", "L1", "H0", "H1") or cmd.startswith("ST"):
             return "OK"
         if cmd == "DPN":
             return "A6"
