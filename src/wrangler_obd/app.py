@@ -283,9 +283,13 @@ class App:
                 writer.write(f"\nSomething went wrong: {exc!r}\n")
                 job.ok = False
             finally:
-                job.finished = time.time()
-        if job.ok and job.step != "codes":
-            self._mark_done(job.step, job.out.name if job.out else None, self._summary(job))
+                # Save progress before marking the job finished, so anyone who sees
+                # it finished also sees the saved progress file.
+                try:
+                    if job.ok and job.step != "codes":
+                        self._mark_done(job.step, job.out.name if job.out else None, self._summary(job))
+                finally:
+                    job.finished = time.time()
 
     def _summary(self, job: Job) -> str:
         """One line for the step card after it finishes."""
