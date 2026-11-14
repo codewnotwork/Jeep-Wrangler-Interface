@@ -16,7 +16,9 @@ The OBD port is under the dash, left of the steering column.
 Double-click **`Wrangler Diagnostics.pyw`** in this folder. It opens in your web browser.
 No typing needed. If Windows asks which program to open the `.pyw` file with, double-click
 `Wrangler Diagnostics.bat` instead. To put it on the desktop, right-click the `.pyw` file
-and choose Send to > Desktop (create shortcut).
+and choose Send to > Desktop (create shortcut). If the app fails to start, the `.pyw` shows
+the error in a pop-up and saves it to `Documents\jeep-data\last-error.txt`. The `.bat` runs
+the app in a window that stays open, so any error stays on screen.
 
 Press **Connect**, then use the **Dashboard** tab:
 
