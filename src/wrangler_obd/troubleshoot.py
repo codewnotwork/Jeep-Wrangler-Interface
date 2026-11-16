@@ -25,6 +25,8 @@ from . import alerts
 WARM_C = 80.0
 TRIM_LIMIT = 8.0       #: total (short + long) fuel trim, percent
 BANK_SPLIT = 6.0       #: difference between banks, percent
+SMALL_LEAK_IDLE = 3.0  #: long-term trim at idle, percent, for the small-leak check
+SMALL_LEAK_GAP = 2.5   #: ...and how much higher than at cruise
 MIN_SECONDS = 20.0     #: time in a condition before its rules are trusted
 IDLE_SETTLE_S = 3.0    #: idle must hold this long before it counts (skips the dip back from a blip)
 CRUISE_SETTLE_S = 5.0  #: cruise must hold this long (skips the seconds after coasting or a fuel cut)
@@ -200,7 +202,28 @@ def evaluate(samples: Sequence[Sample], stored_codes: Sequence[str] = (), pendin
             "Listen for hissing with the engine idling. Check the PCV hose, brake booster hose, intake manifold "
             "gaskets and the EVAP purge line. A smoke test finds it for certain.",
         ))
-    elif lean_idle and "cruise" not in trims:
+    elif not lean_idle and have_idle and have_cruise:
+        # A small leak shows first in the long-term correction the PCM has
+        # learned for idle, before the total trim gets anywhere near a code.
+        li, lc = {}, {}
+        for b in ("b1", "b2"):
+            i, c = _mean(idle, f"ltft_{b}"), _mean(cruise, f"ltft_{b}")
+            if i is not None and c is not None:
+                li[b], lc[b] = i, c
+        if li and all(li[b] >= SMALL_LEAK_IDLE and li[b] - lc[b] >= SMALL_LEAK_GAP for b in li):
+            parts = ", ".join(f"bank {b[1]} {li[b]:+.1f}% at idle vs {lc[b]:+.1f}% at cruise" for b in li)
+            causes.append(_cause(
+                "small_vacuum_leak", "Possible small vacuum leak (mild, and can be normal)", 35,
+                [f"Long-term fuel correction is higher at idle than at cruise: {parts}.",
+                 "Air leaking in past the throttle matters most at idle, when little air is coming through it. "
+                 "A few percent is mild and within normal for many engines."],
+                "With the engine warm and idling, listen around the intake for a hiss. Check the PCV valve and its "
+                "hoses, the brake booster hose, the small vacuum lines and the throttle body gasket. To confirm, "
+                "watch short-term fuel correction while spraying carburetor cleaner briefly near a suspect spot "
+                "(engine off of anything hot, away from the exhaust): if it drops, that spot leaks. A shop smoke "
+                "test finds it for certain.",
+            ))
+    if lean_idle and "cruise" not in trims:
         causes.append(_cause(
             "lean_idle", "Running lean at idle (vacuum leak or fuel delivery)", 50, [describe("idle"),
             "No steady cruise data yet to tell the two apart."],
