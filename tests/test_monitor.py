@@ -117,6 +117,12 @@ def test_catalyst_ignores_coasting_and_cold_start():
         v["o2_b1s2"] = 0.1 + 0.8 * (i % 2)  # converter not lit off yet
     r = troubleshoot.evaluate(early + shift(data, 120))
     assert not [c for c in ids(r) if c.startswith("catalyst")]
+    # A slow drift downstream (0.2 to 0.75 V) while it rarely switches is still healthy.
+    for i, (_, v) in enumerate(data):
+        if v["pedal_d"] > 10:
+            v["o2_b1s2"] = 0.2 + 0.55 * ((i // 30) % 2)
+    r = troubleshoot.evaluate(early + shift(data, 120))
+    assert not [c for c in ids(r) if c.startswith("catalyst")]
     assert r["coverage"]["cruise_s"] > 100
 
 

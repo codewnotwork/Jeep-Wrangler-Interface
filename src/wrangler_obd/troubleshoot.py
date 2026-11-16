@@ -301,7 +301,10 @@ def evaluate(samples: Sequence[Sample], stored_codes: Sequence[str] = (), pendin
         if len(d) < 40 or len(u) < 40 or _crossings(u) < 20:
             continue
         ratio = _crossings(d) / _crossings(u)
-        if ratio >= 0.5 or _spread(d) >= 0.5:
+        # The switch ratio is what decides: a healthy converter's downstream
+        # sensor can drift slowly across 0.5 V or more (oxygen storage filling
+        # and emptying) while still switching rarely.
+        if ratio >= 0.5:
             code = {"bank 1": "P0420", "bank 2": "P0430"}[name]
             causes.append(_cause(
                 f"catalyst_{down}", f"Catalytic converter on {name} may be worn", 45 + (35 if code in codes else 0),
