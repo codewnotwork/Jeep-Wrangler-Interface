@@ -21,7 +21,7 @@ app's **In-Jeep logger** tab lists them.
 Either Pi runs the same software. The 3 A+ uses more power (about 2.5 W against 1 W),
 which makes no difference here: the car charger supplies it while driving, and the
 battery only has to carry it for a few minutes after the key is off. It is also a bit
-bigger (65 x 56 mm, about the size of a playing card cut short).
+bigger: 65 x 56 mm.
 
 ## Why it won't corrupt the SD card
 
