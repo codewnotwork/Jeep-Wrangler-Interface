@@ -40,9 +40,16 @@ Press **Connect**, then use the **Dashboard** tab:
   from a fuel delivery problem.
 - **Notes** (optional): anything worth knowing about the recording, such as "stereo on" or "A/C on".
   You can edit it while recording; it is saved with the report when you press Stop and save.
-- **Tire size**: enter the diameter of the tires on the truck and the size the truck is set up for
-  (stock 2010 Sahara 255/70R18 is about 32.1 in). Speed, distance and mpg are corrected for the
-  difference. If the speedometer already matches a GPS, enter the same size in both.
+- **Tire size**: both boxes match by default (no correction). Change them only if the tires are
+  clearly a different size from what the truck is set up for; speed, distance and mpg are then
+  corrected for the difference.
+- **Battery check**: press Start monitoring with the key on and the engine off, then start the
+  engine. The app watches the voltage while it cranks and saves the resting voltage and the lowest
+  point (above 10 V is good, under 9.6 V means a weak battery or a poor connection).
+- **Drive history** (bottom of the Dashboard): one point per saved recording, so the same commute
+  can be compared over weeks: estimated mpg, warm-up time and the share of fuel burned warming
+  up, long-term fuel correction at idle and at cruise, idle steadiness and the cranking voltage.
+  The mpg is an estimate, fine for comparing drives with each other but not exact.
 - **Stop and save** writes a folder under `Documents\jeep-data` holding `report.md` and
   `report.json` (written for an AI model or a mechanic to read: codes, readiness and on-board
   test results, statistics for every reading, likely causes, before/after each marker), `log.csv` (every sample) and
@@ -222,6 +229,8 @@ print(elm.read_dtcs())
 - `mode06.py`: on-board test result decoding (monitor names, unit scaling)
 - `idle.py`: idle check (RPM dip detection, misfire counter change)
 - `economy.py`: fuel use and mpg estimate from MAP, RPM and intake temperature
+- `drives.py`: one summary line per drive (mpg estimate, warm-up, fuel corrections) and the drive history
+- `battery.py`: resting and cranking voltage check at engine start
 - `extras.py`: Chrysler-specific readings to try (from the OBDb signal set)
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve

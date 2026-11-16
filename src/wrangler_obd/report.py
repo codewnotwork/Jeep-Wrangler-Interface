@@ -325,6 +325,34 @@ LLM_PROMPT = (
 )
 
 
+def _drive_markdown(d: dict, crank: dict | None) -> list[str]:
+    out = ["## Warm-up and battery", ""]
+    if d.get("start_coolant_f") is not None:
+        out.append(f"- Coolant at the start: {d['start_coolant_f']} °F")
+    if d.get("warmup_min") is not None:
+        pct = f", {d['warmup_fuel_pct']}% of this drive's fuel" if d.get("warmup_fuel_pct") is not None else ""
+        out.append(f"- Time to full temperature (176 °F): {d['warmup_min']} min, using about "
+                   f"{d['warmup_gallons_est']} gal (estimate){pct}. A cold engine runs richer "
+                   "until it is warm, so short trips cost more per mile.")
+    elif d.get("start_coolant_f") is not None and d["start_coolant_f"] >= 158:
+        out.append("- The engine was already warm when recording started, so there was no warm-up to measure.")
+    elif d.get("start_coolant_f") is not None:
+        out.append("- The engine did not reach full temperature during this recording.")
+    if d.get("idle_ltft") is not None or d.get("cruise_ltft") is not None:
+        out.append(f"- Long-term fuel correction: {d.get('idle_ltft')}% at idle, {d.get('cruise_ltft')}% at steady "
+                   "cruise (average of both banks; positive means the PCM is adding fuel).")
+    if d.get("idle_rpm_stdev") is not None:
+        out.append(f"- Idle steadiness: rpm varied by {d['idle_rpm_stdev']} (standard deviation) at settled idle.")
+    if crank:
+        rest = f"resting {crank['resting_v']} V, " if crank.get("resting_v") is not None else ""
+        out.append(f"- Battery at engine start: {rest}lowest {crank['cranking_min_v']} V while cranking "
+                   f"for {crank['crank_s']} s. {crank['verdict']}")
+    else:
+        out.append("- Battery cranking check: not measured (start the recording with the key on and the engine "
+                   "off, then start the engine, to record it).")
+    return out
+
+
 def to_markdown(report: dict) -> str:
     """Render the report as Markdown, readable by a person and compact enough for an LLM."""
     v = report["vehicle"]
@@ -393,6 +421,9 @@ def to_markdown(report: dict) -> str:
 
         out += [""] + economy.to_markdown(report["fuel_economy"])
 
+    if report.get("drive") or report.get("cranking"):
+        out += [""] + _drive_markdown(report.get("drive") or {}, report.get("cranking"))
+
     mil = report["check_engine_light_on"]
     out += ["", "## Trouble codes", "", f"Check engine light: {'unknown' if mil is None else 'ON' if mil else 'off'}", ""]
     for label in ("stored", "pending", "permanent"):
@@ -418,11 +449,16 @@ def to_markdown(report: dict) -> str:
     out += ["", "## On-board test results (Mode 06)", ""]
     tests = report["onboard_tests"]
     if tests:
-        rows = [
-            [t["monitor"], t["test"], t["value"], t["min"], t["max"], t["unit"], "pass" if t["passed"] else "FAIL"]
-            for t in tests
-        ]
-        out += _table(["Monitor", "Test", "Value", "Min", "Max", "Unit", "Result"], rows)
+        out += ["The PCM's own pass/fail tests. Chrysler does not publish what its numbered tests measure, "
+                "so \"near the limit\" on those is a hint to watch, not a fault: a test only fails outside "
+                "its limits.", ""]
+        groups: dict[str, list[dict]] = {}
+        for t in tests:
+            groups.setdefault(t["monitor"], []).append(t)
+        for monitor, items in groups.items():
+            out += [f"**{monitor}**" + (f": {items[0]['checks']}" if items[0].get("checks") else "")]
+            out += [f"- {t['test']}: {t.get('verdict') or ('pass' if t['passed'] else 'FAIL')}" for t in items]
+            out.append("")
     else:
         out.append("None reported (they reset when codes are cleared).")
 

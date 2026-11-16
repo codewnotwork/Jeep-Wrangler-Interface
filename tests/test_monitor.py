@@ -217,7 +217,7 @@ def test_app_monitor_and_layout(tmp_path):
     assert not app.busy() and (app.monitor.out / "report.md").exists()
     doc = json.loads((app.monitor.out / "report.json").read_text(encoding="utf-8"))
     assert doc["owner_notes"] == "hello"
-    assert doc["tire_correction"] == {"tire_in": 33.0, "pcm_tire_in": 32.1, "speed_factor": 1.028}
+    assert doc["tire_correction"] == {"tire_in": 33.0, "pcm_tire_in": 33.0, "speed_factor": 1.0}
     assert app.layout() == {}
     app.save_layout({"tiles": ["rpm", "x_trans_temp"], "window": 60})
     assert app.layout() == {"tiles": ["rpm", "x_trans_temp"], "window": 60}
@@ -226,7 +226,9 @@ def test_app_monitor_and_layout(tmp_path):
 
 def test_settings_and_notes_at_stop(tmp_path):
     app = App(tmp_path / "d")
-    assert app.settings() == {"tire_in": 33.0, "pcm_tire_in": 32.1, "auto_update": True}
+    assert app.settings() == {"tire_in": 33.0, "pcm_tire_in": 33.0, "auto_update": True}
+    (tmp_path / "d" / "settings.json").write_text('{"tire_in": 33.0, "pcm_tire_in": 32.1}')
+    assert app.speed_factor() == 1.0  # the old default is read as the new one
     with pytest.raises(ValueError):
         app.save_settings({"tire_in": 840, "pcm_tire_in": 32.1})  # millimetres by mistake
     app.save_settings({"tire_in": 33, "pcm_tire_in": 33})
