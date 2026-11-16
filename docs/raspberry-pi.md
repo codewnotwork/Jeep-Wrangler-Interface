@@ -11,17 +11,20 @@ app's **In-Jeep logger** tab lists them.
 
 | Part | About | Notes |
 |---|---|---|
-| Raspberry Pi **3 Model A+**, Zero 2 W or Zero W | $15–25 | Any of these works. The 3 A+ is the easiest: its pin header is already fitted, and it has a full-size USB port for the OBDLink. The Zero 2 W and the original Zero W need a 2x20 pin header (pre-fitted on the "WH" versions, or soldered or pressed in with a GPIO Hammer Header) plus the OTG adapter below. |
-| Silicognition **LiFePO4wered/Pi+** | $50–60 | The power board that makes shutdown safe. Buy a listing that **includes the cell**. If you buy the cell separately it must be a **3.2 V LiFePO4** cell of the size listed (usually 18650). A normal 3.7 V lithium cell looks the same and would damage the board. |
+| Raspberry Pi **4 Model B, 1 GB** (or a 3 A+, 3 B/3 B+, Zero 2 W or Zero W) | $35 | Any of these works with the power board and the logger. The **Pi 4 1 GB** is the one that's usually in stock at its normal price (Raspberry Pi approved resellers such as PiShop.us). Its pin header is fitted and it has full-size USB ports, so the OBDLink plugs straight in. The 1 GB version is plenty. The Zeros need a 2x20 pin header (pre-fitted on "WH" versions) and the OTG adapter below. |
+| Silicognition **LiFePO4wered/Pi+** | $50–60 | The power board that makes shutdown safe. With a Pi 4 use the **18650** version (the small 14500 cell is not enough for it). Buy a listing that **includes the cell**. If you buy the cell separately it must be a **3.2 V LiFePO4** cell of the size listed (usually 18650). A normal 3.7 V lithium cell looks the same and would damage the board. |
 | High-endurance microSD, 32 GB | $10 | SanDisk High Endurance or Samsung PRO Endurance. |
-| Micro-USB OTG adapter (micro-USB male to USB-A female) | $6 | **Zero 2 W and Zero W only.** The OBDLink EX plugs into this, and this into the Pi's **USB** port (the inner one, not "PWR"). On the 3 A+ the OBDLink plugs straight into its USB port. |
+| Micro-USB OTG adapter (micro-USB male to USB-A female) | $6 | **Zero 2 W and Zero W only.** The OBDLink EX plugs into this, and this into the Pi's **USB** port (the inner one, not "PWR"). On the Pi 4 and Pi 3 boards the OBDLink plugs straight into a USB port. |
 | USB car charger (2.4 A or more) + short micro-USB cable | $12 | Plugs into the power board's USB input, **never the Pi's own power socket** (the board feeds the Pi through the pin header). Use a 12 V outlet that goes **off with the key**. |
 | Small case or Velcro | $5–10 | |
 
-Either Pi runs the same software. The 3 A+ uses more power (about 2.5 W against 1 W),
-which makes no difference here: the car charger supplies it while driving, and the
-battery only has to carry it for a few minutes after the key is off. It is also a bit
-bigger: 65 x 56 mm.
+All of these run the same software. The Pi 4 and Pi 3 boards use more power than a Zero
+(about 3 W against 1 W), which makes no difference here: the car charger supplies it
+while driving, and the battery only has to carry it for a few minutes after the key is
+off. The power board's maker has tested it with the Pi 4: it supplies 2 A continuously,
+and the logger's Pi 4 draws well under 1 A. A Pi 4 is credit-card sized (85 x 56 mm), and
+a case with a passive heat sink is worth it in a hot truck. Don't use a Pi 5: it needs
+more current than the power board is built for.
 
 The original **Zero W** works too, with three differences:
 - In Raspberry Pi Imager choose **Raspberry Pi Zero** as the device and **Raspberry Pi OS
@@ -55,7 +58,7 @@ The original **Zero W** works too, with three differences:
 ### 1. Prepare the SD card on your PC
 
 1. Install **Raspberry Pi Imager** from raspberrypi.com/software and open it.
-2. **Device:** Raspberry Pi 3 (for the 3 A+), Raspberry Pi Zero 2 W, or Raspberry Pi Zero (for the Zero W).
+2. **Device:** Raspberry Pi 4, Raspberry Pi 3, Raspberry Pi Zero 2 W, or Raspberry Pi Zero (for the Zero W).
    **Operating system:** Raspberry Pi OS (other) → **Raspberry Pi OS Lite (64-bit)**, or the **32-bit** one for the Zero W. **Storage:** the SD card.
 3. Press **Next**, then **Edit settings** (or "Customise", depending on the version):
    - Hostname: `wrangler-pi`
