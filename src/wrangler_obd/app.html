@@ -846,7 +846,6 @@ function ago(epoch, now) {
   if (s < 129600) return `${Math.round(s / 3600)} hours ago`;
   return `${Math.round(s / 86400)} days ago`;
 }
-function esc(t) { return String(t ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 async function pollPi() {
   if ($("panel-pi").hidden) return;
   const r = await api("/api/pi").catch(() => null);
