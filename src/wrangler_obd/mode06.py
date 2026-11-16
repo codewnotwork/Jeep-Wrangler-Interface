@@ -42,6 +42,39 @@ MONITORS: dict[int, str] = {
     0xA7: "Misfire, cylinder 6",
 }
 
+#: What each monitor checks, in plain English.
+PURPOSE: dict[str, str] = {
+    "o2_up": "Checks that the upstream oxygen sensor switches rich/lean quickly enough to control the mixture.",
+    "o2_down": "Checks that the downstream oxygen sensor (behind the converter) reads sensibly; it is also used to judge the converter.",
+    "catalyst": "Checks how well the catalytic converter stores oxygen and cleans the exhaust. Higher numbers mean a worn converter.",
+    "egr": "Checks that the EGR valve lets the right amount of exhaust back into the intake (it lowers combustion temperature).",
+    "evap": "Checks the fuel vapour system (tank, lines, charcoal canister) for leaks.",
+    "purge": "Checks that the purge valve draws fuel vapour from the canister into the engine when told to.",
+    "heater": "Checks that the oxygen sensor's heater warms it up in time after a cold start.",
+    "misfire": "Counts misfires the PCM detected. Zero is ideal; a few spread over many cylinders is normal.",
+}
+
+
+def _purpose_key(mid: int) -> str | None:
+    if mid in (0x01, 0x05):
+        return "o2_up"
+    if mid in (0x02, 0x06):
+        return "o2_down"
+    if 0x21 <= mid <= 0x24:
+        return "catalyst"
+    if 0x31 <= mid <= 0x38:
+        return "egr"
+    if 0x39 <= mid <= 0x3C:
+        return "evap"
+    if mid == 0x3D:
+        return "purge"
+    if 0x41 <= mid <= 0x48:
+        return "heater"
+    if 0xA1 <= mid <= 0xAD:
+        return "misfire"
+    return None
+
+
 # Standard test ids (below 0x80).
 TESTS: dict[int, str] = {
     0x01: "Rich to lean sensor threshold voltage",
@@ -101,7 +134,7 @@ class TestResult:
 
     @property
     def test(self) -> str:
-        return TESTS.get(self.tid, f"Test 0x{self.tid:02X} (manufacturer-defined)")
+        return TESTS.get(self.tid, f"Chrysler test 0x{self.tid:02X} (definition not published)")
 
     @property
     def passed(self) -> bool:
@@ -124,9 +157,56 @@ class TestResult:
         """True when min and max span the whole range, i.e. there is no real limit."""
         return (self.minimum, self.maximum) == _scaled_range(self.unit_id)
 
+    @property
+    def purpose(self) -> str:
+        key = _purpose_key(self.mid)
+        return PURPOSE[key] if key else ""
+
+    def limit_use(self) -> tuple[float, str] | None:
+        """How close the value is to the limit that matters: ``(fraction, "max"|"min")``.
+
+        0.0 is far from the limit and 1.0 is at it. Only one side of most
+        tests is a real limit: the other is zero or the end of the range.
+        """
+        lo, hi = _scaled_range(self.unit_id)
+        has_max = self.maximum < hi and self.maximum > 0
+        has_min = self.minimum > max(lo, 0)
+        if self.minimum == self.maximum or not self.passed:
+            return None
+        if has_max and not has_min and self.value >= 0:
+            return self.value / self.maximum, "max"
+        if has_min and not has_max and self.value > 0:
+            return self.minimum / self.value, "min"
+        if has_min and has_max:
+            m = self.margin
+            return (1 - 2 * m, "both") if m is not None else None
+        return None
+
+    def verdict(self) -> str:
+        """One plain-English line on the result and its room to spare."""
+        if not self.passed:
+            return f"FAILED: {_num(self.value)} is outside {_num(self.minimum)} to {_num(self.maximum)}."
+        if _purpose_key(self.mid) == "misfire" and self.unit == "counts":
+            n = round(self.value)
+            return "No misfires counted." if n == 0 else f"{n} misfire{'s' if n != 1 else ''} counted."
+        if self.minimum == self.maximum and self.value == self.minimum:
+            return f"Passed: {_num(self.value)}, the expected value."
+        if self.minimum == self.maximum or self.open_ended:
+            return f"Passed. Reports {_num(self.value)}; no limit applies."
+        use = self.limit_use() if self.scaled else None
+        if use is None:
+            return f"Passed ({_num(self.value)}, allowed {_num(self.minimum)} to {_num(self.maximum)})."
+        frac, side = use
+        if frac >= 0.999:
+            return f"Passed: reached the {_num(self.value)} the PCM looks for."
+        limit = {"max": f"limit {_num(self.maximum)}", "min": f"must stay above {_num(self.minimum)}",
+                 "both": f"allowed {_num(self.minimum)} to {_num(self.maximum)}"}[side]
+        how = "with plenty of room" if frac < 0.5 else "with some room" if frac < 0.8 else "but near the limit"
+        return f"Passed {how}: {_num(self.value)} ({limit}, {frac * 100:.0f}% of the way to it)."
+
     def as_dict(self) -> dict:
         return {
-            "monitor": self.monitor, "test": self.test,
+            "monitor": self.monitor, "test": self.test, "checks": self.purpose, "verdict": self.verdict(),
             "mid": f"{self.mid:02X}", "tid": f"{self.tid:02X}",
             "value": round(self.value, 4), "min": round(self.minimum, 4), "max": round(self.maximum, 4),
             "unit": self.unit if self.scaled else f"raw (unit id {self.unit_id:02X})",
@@ -161,3 +241,7 @@ def decode_test_results(payload: Sequence[int]) -> list[TestResult]:
             mid, tid, unit_id, value, _scale(unit_id, raw[1])[0], _scale(unit_id, raw[2])[0], unit, scaled,
         ))
     return results
+
+
+def _num(x: float) -> str:
+    return f"{x:.0f}" if abs(x) >= 1000 else f"{x:.4g}"

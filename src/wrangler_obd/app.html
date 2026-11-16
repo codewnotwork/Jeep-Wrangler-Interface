@@ -104,6 +104,25 @@
                font-size: 12px; padding: 3px 8px; border-radius: 6px; white-space: nowrap; pointer-events: none; z-index: 1; }
   :root { --series: #2a78d6; }
   @media (prefers-color-scheme: dark) { :root { --series: #3987e5; } }
+  .history .charts { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); margin-top: 10px; }
+  .hchart { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 6px; position: relative; min-width: 0; }
+  .hchart .name { font-size: 13px; color: var(--muted); line-height: 1.3; }
+  .hchart .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .hchart .value small { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+  .hchart .legend { font-size: 12px; color: var(--muted); display: flex; gap: 12px; }
+  .hchart .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  .hchart svg { display: block; width: 100%; height: 90px; margin-top: 4px; overflow: visible; }
+  .hchart .grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .hchart .axis { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  .hchart .tip { position: absolute; top: 4px; right: 8px; background: var(--ink); color: var(--bg); font-size: 12px;
+                 padding: 3px 8px; border-radius: 6px; pointer-events: none; max-width: 90%; }
+  .history table { border-collapse: collapse; font-size: 13px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .history th, .history td { padding: 4px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  .history th:first-child, .history td:first-child, .history td.note { text-align: left; }
+  .history td.note { white-space: normal; color: var(--muted); min-width: 160px; }
+  .history .tablewrap { overflow-x: auto; }
+  :root { --series-2: #eb6834; }
+  @media (prefers-color-scheme: dark) { :root { --series-2: #d95926; } }
   .causes h2 { margin-bottom: 8px; }
   .cause { border-top: 1px solid var(--line); padding: 12px 0; color: var(--ink); }
   .cause:first-child { border-top: 0; padding-top: 0; }
@@ -183,9 +202,10 @@
         <button id="tire-save">Save</button>
         <span id="tire-msg"></span>
       </div>
-      <p>Stock 2010 Sahara tires (255/70R18) are about 32.1 in, and the truck works out speed for that size unless
-        a dealer or tuner changed it. If that was done, or the speedometer already matches a GPS, enter the same
-        size in both boxes. The speed tile, distance and mpg use the correction; log.csv keeps the truck's own numbers.</p>
+      <p>Leave both boxes the same if your tires are the size the truck came with or close to it (your 33s
+        are). Change them only for a clearly different size, for example 35s on a truck still set for stock
+        tires, or if the speedometer reads differently from a GPS. The speed tile, distance and mpg use the
+        correction; log.csv keeps the truck's own numbers.</p>
     </details>
     <details class="settings">
       <summary>App version: <span id="ver-summary">checking…</span></summary>
@@ -225,6 +245,18 @@
       <div id="causes-body" class="muted">Start monitoring. Patterns across the readings will be checked every few seconds.</div>
     </aside>
   </div>
+
+  <section class="card history" id="history">
+    <h2>Drive history</h2>
+    <p id="hist-note">Each saved recording becomes one point, so the same commute can be compared from week to week.
+      Miles per gallon is the app's estimate: good for comparing drives with each other, not exact (your
+      fill-ups are the real number).</p>
+    <div class="charts" id="hist-charts"></div>
+    <details class="settings">
+      <summary>Show as a table</summary>
+      <div class="tablewrap"><table id="hist-table"></table></div>
+    </details>
+  </section>
 </div>
 
 <main id="panel-steps" hidden>
@@ -473,6 +505,96 @@ $("quit").onclick = async () => {
 };
 function alertBox(msg) { $("job-idle").hidden = false; $("job-idle").textContent = msg; $("job-idle").className = "bad"; }
 
+// ---- Drive history ------------------------------------------------------
+const HIST = [
+  { name: "Estimated mpg", unit: "mpg", lines: [["mpg_est", "Estimated mpg"]], d: 1,
+    help: "Higher is better. Compare similar routes." },
+  { name: "Warm-up time", unit: "min", lines: [["warmup_min", "Minutes to 176 °F"]], d: 1,
+    help: "Only drives that started cold." },
+  { name: "Fuel used warming up", unit: "%", lines: [["warmup_fuel_pct", "Share of the drive's fuel"]], d: 0,
+    help: "Share of each drive's fuel burned before the engine was warm." },
+  { name: "Long-term fuel correction", unit: "%", lines: [["idle_ltft", "Idle"], ["cruise_ltft", "Cruise"]], d: 1,
+    help: "Idle well above cruise points to a small vacuum leak." },
+  { name: "Idle steadiness", unit: "rpm", lines: [["idle_rpm_stdev", "rpm variation at idle"]], d: 1,
+    help: "Lower is smoother." },
+  { name: "Battery while cranking", unit: "V", lines: [["cranking_min_v", "Lowest volts while starting"]], d: 1,
+    help: "Above 10 V is good; under 9.6 V is weak. Start recording before starting the engine." },
+];
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+function driveLabel(r) {
+  const m = /^(\d{4})-(\d\d)-(\d\d) (\d\d)(\d\d)/.exec(r.when || "");
+  if (!m) return r.folder;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
+         d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+async function loadHistory() {
+  let rows;
+  try { rows = await (await fetch("/api/history")).json(); } catch (e) { return; }
+  const box = $("hist-charts");
+  box.innerHTML = "";
+  if (!rows.length) {
+    box.innerHTML = `<div class="empty">No saved drives yet. Each recording you save adds a point here.</div>`;
+    $("hist-table").innerHTML = "";
+    return;
+  }
+  const n = rows.length, xOf = i => n === 1 ? 50 : 4 + i / (n - 1) * 92;
+  for (const spec of HIST) {
+    const series = spec.lines.map(([k]) => rows.map((r, i) => [i, r[k]]).filter(p => typeof p[1] === "number"));
+    const all = series.flat().map(p => p[1]);
+    if (!all.length) continue;
+    let lo = Math.min(...all), hi = Math.max(...all);
+    if (spec.unit === "%" && spec.lines.length > 1) { lo = Math.min(lo, 0); }
+    if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+    const pad = (hi - lo) * 0.12; hi += pad;
+    // Plain SVG in percentages (no viewBox), so dots stay round at any width.
+    const yOf = v => 92 - (v - lo) / (hi - lo) * 84;
+    const el = document.createElement("div");
+    el.className = "hchart";
+    const color = si => si ? "var(--series-2)" : "var(--series)";
+    const latest = series[0].length ? series[0][series[0].length - 1][1] : null;
+    let svg = `<line class="grid" x1="0" x2="100%" y1="100%" y2="100%"></line>`;
+    if (lo < 0 && hi > 0) svg += `<line class="grid" x1="0" x2="100%" y1="${yOf(0)}%" y2="${yOf(0)}%" stroke-dasharray="3 3"></line>`;
+    series.forEach((pts, si) => {
+      for (let j = 1; j < pts.length; j++)
+        svg += `<line x1="${xOf(pts[j - 1][0])}%" y1="${yOf(pts[j - 1][1])}%" x2="${xOf(pts[j][0])}%" y2="${yOf(pts[j][1])}%"
+          stroke="${color(si)}" stroke-width="2" stroke-linecap="round"></line>`;
+    });
+    series.forEach((pts, si) => pts.forEach(([i, v]) => {
+      svg += `<circle cx="${xOf(i)}%" cy="${yOf(v)}%" r="4" fill="${color(si)}" stroke="var(--card)" stroke-width="2"></circle>
+        <circle class="hit" data-i="${i}" cx="${xOf(i)}%" cy="${yOf(v)}%" r="12" fill="transparent"></circle>`;
+    }));
+    const legend = spec.lines.length > 1
+      ? `<div class="legend">${spec.lines.map(([, label], si) => `<span><i style="background:${color(si)}"></i>${label}</span>`).join("")}</div>` : "";
+    el.innerHTML = `<div class="name">${spec.name}${spec.unit ? " (" + spec.unit + ")" : ""}</div>
+      <div class="value">${latest === null ? "–" : latest.toFixed(spec.d)}<small>latest${spec.lines.length > 1 ? " idle" : ""}</small></div>
+      <div class="axis"><span>low ${Math.min(...all).toFixed(spec.d)} · high ${Math.max(...all).toFixed(spec.d)}</span></div>${legend}
+      <svg role="img" aria-label="${spec.name} by drive">${svg}</svg>
+      <div class="axis"><span>${esc(driveLabel(rows[0]))}</span><span>${n > 1 ? esc(driveLabel(rows[n - 1])) : ""}</span></div>
+      <div class="muted" style="font-size:12px">${spec.help}</div><div class="tip" hidden></div>`;
+    const tip = el.querySelector(".tip");
+    el.querySelectorAll(".hit").forEach(h => {
+      h.onmouseenter = () => {
+        const r = rows[+h.dataset.i];
+        const parts = spec.lines.map(([k, label]) => typeof r[k] === "number" ? `${label}: ${r[k].toFixed(spec.d)}` : null).filter(Boolean);
+        tip.hidden = false;
+        tip.textContent = `${driveLabel(r)} · ${parts.join(" · ")}${r.miles ? ` · ${r.miles.toFixed(1)} mi` : ""}${r.notes ? " · " + r.notes : ""}`;
+      };
+      h.onmouseleave = () => { tip.hidden = true; };
+    });
+    box.appendChild(el);
+  }
+  const cols = [["Drive", r => esc(driveLabel(r))], ["Minutes", r => r.duration_min], ["Miles", r => r.miles],
+    ["Est. mpg", r => r.mpg_est], ["Start °F", r => r.start_coolant_f], ["Warm-up min", r => r.warmup_min],
+    ["Warm-up fuel %", r => r.warmup_fuel_pct], ["Idle LTFT %", r => r.idle_ltft], ["Cruise LTFT %", r => r.cruise_ltft],
+    ["Idle rpm var.", r => r.idle_rpm_stdev], ["Crank V", r => r.cranking_min_v]];
+  $("hist-table").innerHTML = `<tr>${cols.map(c => `<th>${c[0]}</th>`).join("")}<th>Notes</th></tr>` +
+    rows.slice().reverse().map(r => `<tr>${cols.map(c => `<td>${c[1](r) ?? "–"}</td>`).join("")}<td class="note">${esc(r.notes)}</td></tr>`).join("");
+}
+let historyFor = null;
+loadHistory();
+
 // ---- Dashboard ----------------------------------------------------------
 const DEFAULT_TILES = ["rpm", "speed", "coolant_temp", "x_trans_temp", "stft_b1", "ltft_b1", "stft_b2", "ltft_b2",
                        "map", "engine_load", "timing_advance", "module_voltage", "o2_b1s1", "o2_b2s1", "evap_purge", "throttle"];
@@ -655,6 +777,7 @@ function renderMonitorControls(r) {
     $("mon-status").className = r.error ? "bad" : "muted";
     $("mon-saved").hidden = false;
     $("mon-saved-text").textContent = `Saved ${fmt(r.elapsed)} of data in "${r.folder}".`;
+    if (!r.saving && historyFor !== r.folder) { historyFor = r.folder; loadHistory(); }
   }
 }
 

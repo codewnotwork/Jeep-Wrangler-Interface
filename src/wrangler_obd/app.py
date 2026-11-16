@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import cli, economy, pisetup, receiver, updater
+from . import cli, drives, economy, pisetup, receiver, updater
 from .elm327 import Elm327, ElmError
 from .monitor import Monitor
 from .simulator import SimulatedTransport
@@ -41,10 +41,11 @@ IDLE_PRESETS = {
 STEP_SECONDS = {"pedal": 45, "idle": 180}
 QUIET_SHUTDOWN_S = 120
 
-#: Tire diameters in inches. The 2010 Sahara left the factory on 255/70R18
-#: tires (about 32.1 in), and the PCM computes speed for that size unless a
-#: dealer or tuner reprogrammed it.
-DEFAULT_SETTINGS = {"tire_in": 33.0, "pcm_tire_in": 32.1, "auto_update": True}
+#: Tire diameters in inches. The owner's 33s are effectively the stock size,
+#: so by default there is no speed correction.
+DEFAULT_SETTINGS = {"tire_in": 33.0, "pcm_tire_in": 33.0, "auto_update": True}
+#: The previous default (33 on a truck set for 32.1); a saved copy of it is read as the new default.
+_OLD_TIRE_DEFAULT = (33.0, 32.1)
 
 #: The folder holding the launcher (two levels above this file).
 APP_DIR = Path(__file__).resolve().parents[2]
@@ -208,9 +209,10 @@ class App:
             saved = json.loads(self._settings_file().read_text(encoding="utf-8"))
         except (OSError, ValueError):
             saved = {}
-        for key in ("tire_in", "pcm_tire_in"):
-            if isinstance(saved.get(key), (int, float)) and 20 <= saved[key] <= 50:
-                out[key] = float(saved[key])
+        if (saved.get("tire_in"), saved.get("pcm_tire_in")) != _OLD_TIRE_DEFAULT:
+            for key in ("tire_in", "pcm_tire_in"):
+                if isinstance(saved.get(key), (int, float)) and 20 <= saved[key] <= 50:
+                    out[key] = float(saved[key])
         if isinstance(saved.get("auto_update"), bool):
             out["auto_update"] = saved["auto_update"]
         return out
@@ -512,6 +514,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self.app.settings())
         if url.path == "/api/version":
             return self._json(self.app.version())
+        if url.path == "/api/history":
+            return self._json(drives.history(self.app.data_dir))
         if url.path == "/api/live":
             return self._json(self.app.live())
         if url.path == "/api/pi":

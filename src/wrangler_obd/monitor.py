@@ -24,7 +24,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import economy, extras, report, troubleshoot
+from . import battery, drives, economy, extras, report, troubleshoot
 from .elm327 import Elm327, ElmError
 from .pids import PIDS, to_imperial
 from .transport import TransportError
@@ -64,6 +64,8 @@ class Monitor:
         self._lock = threading.Lock()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._codes: tuple[list[str], list[str]] = ([], [])
+        #: Battery check: watches the voltage dip if the engine is started during the recording.
+        self.crank = battery.CrankWatch()
 
     # -- control -------------------------------------------------------------
 
@@ -130,10 +132,18 @@ class Monitor:
                 self.elm.fast = True
                 while not self._stop.is_set():
                     tick = time.time()
-                    wanted = fast + (slow if self.count % SLOW_EVERY == 0 else [])
+                    full_pass = self.count % SLOW_EVERY == 0
+                    wanted = fast + (slow if full_pass else [])
+                    if self.crank.watching and not full_pass and "rpm" in fast:
+                        # Still watching means the engine hasn't run yet (key on, engine off):
+                        # read rpm and voltage as fast as possible
+                        # so the dip while cranking isn't missed.
+                        wanted = ["rpm"]
                     values = {k: r.value for k, r in self.elm.read_pids(wanted).items()}
                     if found and self.count % EXTRAS_EVERY == 0:
                         values.update(self._read_extras(found))
+                    if self.crank.watching:
+                        self._watch_crank(tick, values.get("rpm"))
                     # Rounded once here, so the time a browser sends back as "since" matches exactly.
                     t = round(tick - self.started, 3)
                     with self._lock:
@@ -166,6 +176,13 @@ class Monitor:
                 self.error = self.error or f"The log was saved but the report could not be written: {exc!r}"
             self.saving = False
             self.finished = time.time()
+
+    def _watch_crank(self, tick: float, rpm: float | None) -> None:
+        try:
+            volts = self.elm.battery_voltage()
+        except ElmError:
+            volts = None
+        self.crank.feed(tick - self.started, rpm, volts)
 
     # -- reading the buffer ---------------------------------------------------
 
@@ -240,6 +257,11 @@ class Monitor:
         if self.tires:
             doc["tire_correction"] = {**self.tires, "speed_factor": round(self.speed_factor, 4)}
         doc["likely_causes"] = analysis
+        doc["drive"] = drives.drive_summary(data, self.speed_factor)
+        if self.crank.watching:
+            self.crank.finish(data[-1][0])  # recording ended mid-crank or with the engine off
+        doc["cranking"] = self.crank.result
+        doc["drive"]["cranking_min_v"] = (self.crank.result or {}).get("cranking_min_v")
         doc["markers"] = list(self.markers)
         doc["segments_between_markers"] = report.segments_between(data, self.markers, self.speed_factor)
         (self.out / "report.json").write_text(report.to_json(doc), encoding="utf-8")

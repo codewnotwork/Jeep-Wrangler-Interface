@@ -47,6 +47,11 @@ truck says it supports but answered with "no data" (0xFFFF), so treat them as un
 The idle segment is warm, settled idle with the foot off the pedal, and the cruise segment
 leaves out coasting (fuel cut sends every O2 sensor to 0 V). On this truck the catalyst
 temperatures are the PCM's estimate (both banks identical), not sensor readings.
+`drive` holds the per-drive numbers the Drive history chart compares (mpg estimate, warm-up
+minutes and fuel share, idle and cruise long-term fuel correction, idle rpm spread), and
+`cranking` the battery check (null unless the recording began with the engine off). Mode 06
+results carry `checks` (what the test is for) and `verdict` (pass and how close to the limit).
+A `small_vacuum_leak` cause means idle LTFT is a few points above cruise: mild, and can be normal.
 
 ## Commands and what to read
 

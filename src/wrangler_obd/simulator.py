@@ -53,8 +53,29 @@ class SimulatedVehicle:
             (0xA7, 0x0C, 0x24, 0, 0, 65535),
         ]
 
+    #: Seconds after start that the engine is cranked; None means it is already running.
+    #: Before that the key is on with the engine off; cranking takes ``CRANK_S``.
+    start_engine_at: float | None = None
+    CRANK_S = 1.2
+
     def elapsed(self) -> float:
         return self._clock() - self._t0
+
+    def engine_state(self) -> str:
+        if self.start_engine_at is None:
+            return "running"
+        t = self.elapsed()
+        if t < self.start_engine_at:
+            return "off"
+        return "cranking" if t < self.start_engine_at + self.CRANK_S else "running"
+
+    def port_voltage(self) -> float:
+        state = self.engine_state()
+        if state == "off":
+            return 12.55
+        if state == "cranking":
+            return 10.4 + 0.3 * math.sin(self.elapsed() * 20)
+        return self.values()["module_voltage"] - 0.1
 
     #: An idle stumble: every STUMBLE_EVERY seconds cylinder 2 misfires briefly.
     STUMBLE_EVERY = 7.0
@@ -122,6 +143,16 @@ class SimulatedVehicle:
             "warmups_since_clear": 12,
             # The JK answers this one with 0xFFFF, its "not available" value.
             "dist_since_clear": 65535,
+        } if self.engine_state() == "running" else self._engine_off_values(t)
+
+    def _engine_off_values(self, t: float) -> dict[str, float]:
+        cranking = self.engine_state() == "cranking"
+        return {
+            "rpm": 180.0 if cranking else 0.0, "speed": 0.0, "coolant_temp": 20.0, "intake_temp": 18,
+            "engine_load": 0.0, "map": 60 if cranking else 99, "baro": 99, "throttle": 14, "maf": 0.5 if cranking else 0.0,
+            "run_time": 0, "fuel_level": 61, "module_voltage": self.port_voltage() + 0.1, "ambient_temp": 18,
+            "ltft_b1": 6.3, "ltft_b2": 2.3, "stft_b1": 0.0, "stft_b2": 0.0, "pedal_d": 15, "pedal_e": 7.5,
+            "dist_mil_on": 42, "warmups_since_clear": 12, "dist_since_clear": 65535,
         }
 
 
@@ -249,7 +280,10 @@ class SimulatedTransport:
                 return self._reply([0x41, 0x03, 0x02 if v.values()["coolant_temp"] > 40 else 0x01, 0x00])
             for key, p in PIDS.items():
                 if p.pid == pid:
-                    return self._reply([0x41, pid, *_encode(key, v.values()[key])])
+                    now = v.values()
+                    if key not in now:
+                        return "NO DATA"  # engine off: the PCM leaves some readings out
+                    return self._reply([0x41, pid, *_encode(key, now[key])])
             return "NO DATA"
         if mode in (0x03, 0x07, 0x0A):
             codes = {0x03: v.stored_dtcs, 0x07: v.pending_dtcs, 0x0A: v.permanent_dtcs}[mode]
@@ -365,5 +399,5 @@ class SimulatedTransport:
         if cmd == "DPN":
             return "A6"
         if cmd == "RV":
-            return f"{self.vehicle.values()['module_voltage'] - 0.1:.1f}V"
+            return f"{self.vehicle.port_voltage():.1f}V"
         return "?"
