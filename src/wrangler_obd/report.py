@@ -15,7 +15,7 @@ from typing import Iterable, Mapping
 
 from . import __version__, alerts, extras
 from . import dtc as dtc_mod
-from .elm327 import Elm327
+from .elm327 import DtcReport, Elm327, ElmError
 from .pids import PIDS
 
 SCHEMA = "wrangler-obd-report/1"
@@ -46,42 +46,53 @@ def _stats(values: list[float]) -> dict:
     return {"min": _round(min(values)), "mean": _round(statistics.fmean(values)), "max": _round(max(values))}
 
 
-def summarize_log(samples: Iterable[Sample], duration_s: float | None = None) -> dict:
+def summarize_log(samples: Iterable, duration_s: float | None = None) -> dict:
     """Reduce a recorded log to statistics, split by operating condition.
 
-    Segments: ``idle`` (stopped, warm, under 1000 rpm) and ``cruise``
-    (moving, steady throttle). Fuel trims mean different things in each: a
-    lean trim only at idle points to a vacuum leak, lean everywhere points
-    to fuel delivery or the MAP sensor.
+    ``samples`` are ``(seconds, values)`` pairs, or bare value dicts (then
+    evenly spaced over ``duration_s`` is assumed). Segments: ``idle`` (warm,
+    stopped, foot off the pedal, settled) and ``cruise`` (warm, 25 mph or
+    more, foot on the pedal, not coasting). Fuel trims mean different things
+    in each: a lean trim only at idle points to a vacuum leak, lean
+    everywhere points to fuel delivery or the MAP sensor.
     """
-    samples = list(samples)
-    summary: dict = {"samples": len(samples)}
+    from . import troubleshoot
+
+    items = list(samples)
+    if items and not isinstance(items[0], tuple):
+        step = (duration_s / len(items)) if duration_s else 0.5
+        items = [(i * step, v) for i, v in enumerate(items)]
+    rows = [v for _, v in items]
+    summary: dict = {"samples": len(rows)}
     if duration_s is not None:
         summary["duration_s"] = _round(duration_s)
-    if not samples:
+    if not rows:
         return summary
 
-    def collect(rows: list[Sample]) -> dict:
+    def collect(part: list[Sample]) -> dict:
         out = {}
         for key in list(PIDS) + [f"x_{e.key}" for e in extras.EXTRAS]:
-            vals = [r[key] for r in rows if key in r]
+            vals = [r[key] for r in part if key in r]
             if vals:
                 out[key] = _stats(vals)
         return out
 
-    summary["overall"] = collect(samples)
-    warm = [s for s in samples if s.get("coolant_temp", 0) >= 80]
-    idle = [s for s in warm if s.get("speed", 0) < 1 and 0 < s.get("rpm", 0) < 1000]
-    cruise = [s for s in warm if s.get("speed", 0) >= 40 and s.get("throttle", 0) < 40]
+    summary["overall"] = collect(rows)
+    rest = troubleshoot.rest_levels(rows)
+    idle = [v for _, v in troubleshoot.settled_idle(items, rest)]
+    cruise = [v for _, v in troubleshoot.steady_cruise(items, rest)]
     trim_keys = ("stft_b1", "ltft_b1", "stft_b2", "ltft_b2", "rpm", "map", "maf", "engine_load")
     segments = {}
-    for name, rows in (("idle", idle), ("cruise", cruise)):
-        if rows:
-            stats = collect(rows)
-            segments[name] = {"samples": len(rows), **{k: stats[k] for k in trim_keys if k in stats}}
+    for name, part in (("idle", idle), ("cruise", cruise)):
+        if part:
+            stats = collect(part)
+            segments[name] = {"samples": len(part), **{k: stats[k] for k in trim_keys if k in stats}}
+            if name == "idle" and len(part) >= 2 and "rpm" in stats:
+                segments[name]["rpm"]["stdev"] = _round(statistics.pstdev(r["rpm"] for r in part if "rpm" in r))
     summary["segments"] = segments
 
     # Upstream O2 sensors should swing rich/lean constantly once warm.
+    warm = [s for s in rows if s.get("coolant_temp", 0) >= 80]
     o2 = {}
     for key in ("o2_b1s1", "o2_b2s1"):
         vals = [s[key] for s in warm if key in s]
@@ -91,12 +102,24 @@ def summarize_log(samples: Iterable[Sample], duration_s: float | None = None) ->
     if o2:
         summary["o2_switching"] = o2
 
+    notes = []
+    if troubleshoot.catalyst_temps_estimated(rows):
+        notes.append("Catalyst temperatures are identical on both banks, so they are the PCM's estimate, "
+                     "not measured by a sensor.")
+    if notes:
+        summary["notes"] = notes
+
     findings: dict[tuple[str, str], alerts.Alert] = {}
-    for s in samples:
+    for s in rows:
         for alert in alerts.check(s):
-            if alert.key.startswith("fuel_trim"):
-                continue  # judged on segment averages below, not single samples
+            if alert.key.startswith("fuel_trim") or "overcharging" in alert.message:
+                continue  # judged below on averages and sustained values, not single samples
             findings.setdefault((alert.key, alert.severity), alert)
+    high = troubleshoot.sustained_volts(items)
+    if high is not None:
+        alert = alerts.high_volts_alert(high[0], high[1], sustained=True)
+        if alert:
+            findings[("module_voltage_high", alert.severity)] = alert
     for name, seg in segments.items():
         for bank in ("b1", "b2"):
             if f"ltft_{bank}" in seg:
@@ -114,6 +137,29 @@ def _codes(codes: list[str]) -> list[dict]:
     return [{"code": c, "description": dtc_mod.describe(c)} for c in codes]
 
 
+def read_vehicle(elm: Elm327, manufacturer: list | None = None) -> dict:
+    """Ask the truck for everything that is read once: codes, readiness, Mode 06, snapshot.
+
+    The most important items are read first, so if the connection drops
+    part way through, what was read is kept. A failed item is left as None.
+    A lost connection (``TransportError``) still stops it.
+    """
+    info: dict = {"read_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    steps = (
+        ("status", elm.monitor_status), ("dtcs", elm.read_dtcs), ("tests", elm.test_results),
+        ("frame", elm.freeze_frame), ("vin", elm.vin), ("fuel_system", elm.fuel_system_status),
+        ("battery", elm.battery_voltage), ("snapshot", lambda: elm.read_pids(list(PIDS))),
+    )
+    for name, read in steps:
+        try:
+            info[name] = read()
+        except ElmError:
+            info[name] = None
+    info["protocol"], info["adapter"] = elm.protocol, elm.version
+    info["manufacturer"] = manufacturer if manufacturer is not None else extras.probe(elm)
+    return info
+
+
 def build_report(
     elm: Elm327,
     log_summary: dict | None = None,
@@ -123,11 +169,23 @@ def build_report(
     fuel_economy: dict | None = None,
 ) -> dict:
     """Query the vehicle and assemble the report dictionary."""
-    status = elm.monitor_status() or {}
-    dtcs = elm.read_dtcs()
-    frame = elm.freeze_frame()
-    snapshot = elm.read_pids(list(PIDS))
-    tests = elm.test_results()
+    return assemble_report(read_vehicle(elm), log_summary, log_file, notes, idle_check, fuel_economy)
+
+
+def assemble_report(
+    info: dict,
+    log_summary: dict | None = None,
+    log_file: str | None = None,
+    notes: str = "",
+    idle_check: dict | None = None,
+    fuel_economy: dict | None = None,
+) -> dict:
+    """Build the report from what ``read_vehicle`` returned (possibly earlier in the drive)."""
+    status = info.get("status") or {}
+    dtcs = info.get("dtcs") or DtcReport()
+    frame = info.get("frame")
+    snapshot = info.get("snapshot") or {}
+    tests = info.get("tests") or []
 
     findings = [a.as_dict() for a in alerts.check({k: r.value for k, r in snapshot.items()})]
     for t in tests:
@@ -152,11 +210,12 @@ def build_report(
         "units": "metric (°C, km/h, kPa, g/s, km)",
         "vehicle": {
             "description": VEHICLE,
-            "vin": elm.vin(),
-            "protocol": elm.protocol,
-            "adapter": elm.version,
-            "battery_voltage_at_port": elm.battery_voltage(),
+            "vin": info.get("vin"),
+            "protocol": info.get("protocol") or None,
+            "adapter": info.get("adapter") or None,
+            "battery_voltage_at_port": info.get("battery"),
         },
+        "vehicle_data_read_at": info.get("read_at"),
         "owner_notes": notes,
         "check_engine_light_on": dtcs.mil_on,
         "trouble_codes": {
@@ -174,9 +233,9 @@ def build_report(
             "incomplete": incomplete,
             "ready_for_emissions_test": not incomplete if status else None,
         },
-        "fuel_system_status": elm.fuel_system_status(),
+        "fuel_system_status": info.get("fuel_system"),
         "snapshot": {k: {"value": _round(r.value), "unit": r.unit, "name": r.pid.name} for k, r in snapshot.items()},
-        "manufacturer_readings": extras.probe(elm),
+        "manufacturer_readings": info.get("manufacturer") or [],
         "onboard_tests": [t.as_dict() for t in tests],
         "findings": findings,
     }
@@ -221,7 +280,7 @@ COMPARE_KEYS = (
 )
 
 
-def segments_between(samples: list, markers: list[dict]) -> list[dict]:
+def segments_between(samples: list, markers: list[dict], speed_factor: float = 1.0) -> list[dict]:
     """Split a recording at its markers and average the key readings in each part.
 
     This is the before/after comparison: drop a marker when something is
@@ -241,7 +300,7 @@ def segments_between(samples: list, markers: list[dict]) -> list[dict]:
             vals = [v[key] for _, v in part if key in v]
             if vals:
                 means[key] = _round(statistics.fmean(vals))
-        mpg = economy_summary(part)
+        mpg = economy_summary(part, speed_factor)
         out.append({
             "after_marker": name, "from_s": round(lo, 1), "to_s": round(hi, 1), "samples": len(part),
             "means": means, "mpg": mpg["mpg"] if mpg else None,
@@ -249,10 +308,10 @@ def segments_between(samples: list, markers: list[dict]) -> list[dict]:
     return out
 
 
-def economy_summary(part: list) -> dict | None:
+def economy_summary(part: list, speed_factor: float = 1.0) -> dict | None:
     from . import economy
 
-    return economy.summarize(part)
+    return economy.summarize(part, speed_factor)
 
 
 def to_json(report: dict) -> str:
@@ -280,6 +339,13 @@ def to_markdown(report: dict) -> str:
         f"- Protocol: {v['protocol']}",
         f"- Units: {report['units']}",
     ]
+    if report.get("vehicle_data_read_at"):
+        out.append(f"- Codes, readiness and on-board tests read at: {report['vehicle_data_read_at']}")
+    tires = report.get("tire_correction")
+    if tires:
+        out.append(f"- Tire size correction: speed and distance multiplied by {tires['speed_factor']} "
+                   f"({tires['tire_in']} in tires, truck set for {tires['pcm_tire_in']} in). "
+                   "Speeds in the log tables and log.csv are as the PCM reports them.")
     if v["battery_voltage_at_port"] is not None:
         out.append(f"- Battery voltage at OBD port: {v['battery_voltage_at_port']:.1f} V")
     if report["fuel_system_status"]:
@@ -361,7 +427,15 @@ def to_markdown(report: dict) -> str:
         out.append("None reported (they reset when codes are cleared).")
 
     out += ["", "## Snapshot of live data", ""]
+    if report.get("snapshot_source"):
+        out += [f"From the {report['snapshot_source']} (the truck could not be asked at the end).", ""]
     out += _table(["Reading", "Value"], [[x["name"], f"{x['value']} {x['unit']}"] for x in report["snapshot"].values()])
+
+    if report.get("not_reported"):
+        out += ["", "## Listed but not reported", "",
+                "The truck says it supports these, but answered with \"no data\" or nothing during the "
+                "recording. Treat them as unavailable, not as zero.", ""]
+        out += [f"- {x['name']}" for x in report["not_reported"]]
 
     if report.get("manufacturer_readings"):
         out += ["", "## Manufacturer readings", "",
@@ -377,11 +451,14 @@ def to_markdown(report: dict) -> str:
         out += ["", "## Recorded log", "", f"{log['samples']} samples"
                 + (f" over {log['duration_s']:.0f} s" if "duration_s" in log else "")
                 + (f", raw data in `{log['file']}`." if log.get("file") else ".")]
-        for name, title in (("idle", "Warm idle"), ("cruise", "Warm cruise")):
+        out += [f"_{n}_" for n in log.get("notes", [])]
+        for name, title in (("idle", "Warm, settled idle"), ("cruise", "Steady warm cruise (not coasting)")):
             seg = log.get("segments", {}).get(name)
             if seg:
                 out += ["", f"### {title} ({seg['samples']} samples)", ""]
                 out += _stat_table({k: s for k, s in seg.items() if k != "samples"})
+                if "stdev" in seg.get("rpm", {}):
+                    out += ["", f"Idle speed standard deviation: {seg['rpm']['stdev']} rpm."]
         if log.get("o2_switching"):
             out += ["", "### Upstream O2 sensor switching (warm)", ""]
             rows = [[PIDS[k].name, s["min"], s["max"], s["crossings_of_0.45V"]] for k, s in log["o2_switching"].items()]

@@ -38,10 +38,20 @@ Press **Connect**, then use the **Dashboard** tab:
   evidence and the next thing to check. It is a pointer, not a verdict. It needs about
   20 seconds of warm idle, and a few minutes of steady cruising to tell a vacuum leak
   from a fuel delivery problem.
+- **Notes** (optional): anything worth knowing about the recording, such as "stereo on" or "A/C on".
+  You can edit it while recording; it is saved with the report when you press Stop and save.
+- **Tire size**: enter the diameter of the tires on the truck and the size the truck is set up for
+  (stock 2010 Sahara 255/70R18 is about 32.1 in). Speed, distance and mpg are corrected for the
+  difference. If the speedometer already matches a GPS, enter the same size in both.
 - **Stop and save** writes a folder under `Documents\jeep-data` holding `report.md` and
-  `report.json` (written for an AI model or a mechanic to read: codes, statistics for every
-  reading, likely causes, before/after each marker), `log.csv` (every sample) and
+  `report.json` (written for an AI model or a mechanic to read: codes, readiness and on-board
+  test results, statistics for every reading, likely causes, before/after each marker), `log.csv` (every sample) and
   `markers.json`.
+
+**Updates** happen by themselves: each time you open the app with an internet connection, it
+checks GitHub for a newer version and installs it before the window opens (your recordings and
+settings are not touched). Offline, it starts as usual. You can turn this off, or check by hand,
+under "App version" on the Dashboard tab. This needs the GitHub repository to be public.
 
 The **Guided steps** tab keeps the one-button procedures (pedal map, record a drive, idle
 checks, transmission temperature scan, make a ZIP to send).
@@ -216,6 +226,7 @@ print(elm.read_dtcs())
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve
 - `app.py`, `app.html`: the point-and-click app (local web page)
+- `updater.py`: checks GitHub for a newer version at launch and installs it
 - `monitor.py`: background recorder behind the dashboard (all readings, markers, saved report)
 - `troubleshoot.py`: live fault-pattern rules that rank likely causes
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings

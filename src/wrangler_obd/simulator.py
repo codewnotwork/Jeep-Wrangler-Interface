@@ -120,7 +120,8 @@ class SimulatedVehicle:
             "pedal_e": (15 + 65 * math.sqrt(driving)) / 2,
             "dist_mil_on": 42,
             "warmups_since_clear": 12,
-            "dist_since_clear": 310,
+            # The JK answers this one with 0xFFFF, its "not available" value.
+            "dist_since_clear": 65535,
         }
 
 

@@ -40,6 +40,13 @@ The app's Dashboard tab records everything the truck answers and saves a folder 
 (each with `score`, `evidence`, `next_check`); treat it as a starting hypothesis and check
 it against `log.csv` yourself. `markers` are the owner's notes of what they changed and
 when, and `segments_between_markers` holds the averages before and after each one.
+Codes, readiness and Mode 06 are read before recording starts and again at the end;
+`vehicle_data_read_at` says which copy is in the report. `not_reported` lists readings the
+truck says it supports but answered with "no data" (0xFFFF), so treat them as unavailable.
+`tire_correction` gives the speed factor used for distance and mpg (log.csv speeds are raw).
+The idle segment is warm, settled idle with the foot off the pedal, and the cruise segment
+leaves out coasting (fuel cut sends every O2 sensor to 0 V). On this truck the catalyst
+temperatures are the PCM's estimate (both banks identical), not sensor readings.
 
 ## Commands and what to read
 

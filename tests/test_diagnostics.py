@@ -88,7 +88,8 @@ def test_summarize_log_segments():
     cold = [{"rpm": 900, "speed": 0, "coolant_temp": 30, "throttle": 14, "ltft_b1": 0, "stft_b1": 0}] * 5
     s = report.summarize_log(cold + idle + cruise, duration_s=45)
     assert s["samples"] == 45
-    assert s["segments"]["idle"]["samples"] == 20 and s["segments"]["cruise"]["samples"] == 20
+    # The first seconds of each condition are left out while it settles (3 s idle, 5 s cruise).
+    assert s["segments"]["idle"]["samples"] == 17 and s["segments"]["cruise"]["samples"] == 15
     assert s["segments"]["idle"]["ltft_b1"]["mean"] == 14
     assert s["o2_switching"]["o2_b1s1"]["crossings_of_0.45V"] == 19
     # Lean at idle only: one finding, and it names the segment.

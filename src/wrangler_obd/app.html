@@ -57,6 +57,11 @@
   select, input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
                   background: var(--card); color: var(--ink); min-width: 0; }
   input.notes { flex: 1 1 240px; }
+  input.inch { width: 5.5em; }
+  details.settings { margin-top: 2px; font-size: 14px; color: var(--muted); }
+  details.settings summary { cursor: pointer; }
+  details.settings .row { margin-top: 8px; color: var(--ink); }
+  details.settings p { margin: 8px 0 0; }
   .vehicle { font-size: 14px; color: var(--muted); margin-top: 8px; }
   .vehicle b { color: var(--ink); font-weight: 600; }
   .error { color: var(--bad); font-size: 14px; margin-top: 8px; }
@@ -149,12 +154,39 @@
 </div>
 
 <div id="panel-dash" class="dash">
+  <div class="card ok" id="updated-banner" hidden></div>
   <section class="card controls">
     <div class="row">
       <button class="primary" id="mon-start">Start monitoring</button>
       <button class="danger" id="mon-stop" hidden>Stop and save</button>
       <span id="mon-status" class="muted">Records every reading the truck supports. Connect first.</span>
     </div>
+    <div class="row">
+      <input class="notes" id="mon-notes" maxlength="2000" aria-label="Notes for this recording"
+             placeholder="Notes (optional): stereo on, A/C on, route, weather. Saved with the report.">
+    </div>
+    <details class="settings">
+      <summary>Tire size: <span id="tire-summary">loading…</span></summary>
+      <div class="row">
+        <label>Tires on the truck <input class="inch" id="tire-in" type="number" step="0.1" min="20" max="50"> in</label>
+        <label>Size the truck is set for <input class="inch" id="pcm-tire-in" type="number" step="0.1" min="20" max="50"> in</label>
+        <button id="tire-save">Save</button>
+        <span id="tire-msg"></span>
+      </div>
+      <p>Stock 2010 Sahara tires (255/70R18) are about 32.1 in, and the truck works out speed for that size unless
+        a dealer or tuner changed it. If that was done, or the speedometer already matches a GPS, enter the same
+        size in both boxes. The speed tile, distance and mpg use the correction; log.csv keeps the truck's own numbers.</p>
+    </details>
+    <details class="settings">
+      <summary>App version: <span id="ver-summary">checking…</span></summary>
+      <div class="row">
+        <label><input type="checkbox" id="auto-update"> Update automatically when the app starts</label>
+        <button id="update-now">Check for updates now</button>
+        <span id="update-msg"></span>
+      </div>
+      <p>Updates come from GitHub and need an internet connection. Without one (in the truck, for example) the
+        app starts as usual. Your recordings and settings in Documents\jeep-data are never changed.</p>
+    </details>
     <div class="row" id="mon-tools" hidden>
       <input class="notes" id="marker-text" placeholder="Marker: what did you just change? (e.g. unplugged purge valve)" maxlength="200">
       <button id="marker-add">Add marker</button>
@@ -561,7 +593,9 @@ function renderMonitorControls(r) {
   $("mon-tools").hidden = !running;
   if (!r) { $("mon-status").textContent = connected ? "Ready. Records every reading the truck supports." : "Records every reading the truck supports. Connect first."; $("mon-saved").hidden = true; return; }
   if (running) {
-    $("mon-status").textContent = `Recording ${r.catalog.length} readings · ${fmt(r.elapsed)} · ${r.count.toLocaleString()} samples (${r.rate} per second)`;
+    $("mon-status").textContent = r.phase !== "recording"
+      ? "Reading codes, readiness and on-board test results first…"
+      : `Recording ${r.catalog.length} readings · ${fmt(r.elapsed)} · ${r.count.toLocaleString()} samples (${r.rate} per second)`;
     $("mon-status").className = "ok"; $("mon-saved").hidden = true;
   } else {
     $("mon-status").textContent = r.error || (r.saving ? "Saving…" : "Stopped.");
@@ -572,10 +606,10 @@ function renderMonitorControls(r) {
 }
 
 $("mon-start").onclick = async () => {
-  try { await api("/api/monitor/start", {}); } catch (e) { $("mon-status").textContent = e.message; $("mon-status").className = "bad"; }
+  try { await api("/api/monitor/start", { notes: $("mon-notes").value }); } catch (e) { $("mon-status").textContent = e.message; $("mon-status").className = "bad"; }
   pollMonitor(); poll();
 };
-$("mon-stop").onclick = async () => { $("mon-stop").disabled = true; await api("/api/monitor/stop", {}).catch(() => {}); setTimeout(() => { $("mon-stop").disabled = false; }, 3000); };
+$("mon-stop").onclick = async () => { $("mon-stop").disabled = true; await api("/api/monitor/stop", { notes: $("mon-notes").value }).catch(() => {}); setTimeout(() => { $("mon-stop").disabled = false; }, 3000); };
 $("marker-add").onclick = async () => {
   const text = $("marker-text").value.trim() || "Marker";
   try { await api("/api/monitor/marker", { text }); $("marker-text").value = ""; pollMonitor(); } catch (e) { $("mon-status").textContent = e.message; }
@@ -585,10 +619,55 @@ $("window").onchange = () => { windowS = +$("window").value; saveLayout(); drawT
 $("tile-add").onclick = () => { const k = $("tile-pick").value; if (!catalogEntry(k)) return; tiles = (tiles || []).concat(k); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
 $("tile-all").onclick = () => { tiles = mon.catalog.map(c => c.key); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
 $("tile-reset").onclick = () => { tiles = DEFAULT_TILES.filter(k => catalogEntry(k)); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
+function showTires(t) {
+  $("tire-in").value = t.tire_in; $("pcm-tire-in").value = t.pcm_tire_in;
+  const f = t.tire_in / t.pcm_tire_in;
+  $("tire-summary").textContent = Math.abs(f - 1) < 0.001
+    ? `${t.tire_in} in, no correction`
+    : `${t.tire_in} in on a truck set for ${t.pcm_tire_in} in (speed ×${f.toFixed(3)})`;
+}
+const UPDATE_TEXT = {
+  current: "You have the latest version.",
+  offline: "Could not reach GitHub (no internet?). Using the installed version.",
+  private: "Updates need the GitHub repository to be public.",
+  developer: "This copy is a git checkout, so it is not updated automatically.",
+};
+function shortDate(iso) { return iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""; }
+function showVersion(v) {
+  const last = v.last_check || {};
+  const inst = (v.installed && v.installed.commit) ? v.installed : (last.installed || {});
+  $("ver-summary").textContent = inst.commit ? `${inst.commit.slice(0, 7)} from ${shortDate(inst.date)}` : "not recorded yet";
+  if (last.status) {
+    $("update-msg").textContent = last.status === "updated" ? "Updated at the last start." : (UPDATE_TEXT[last.status] || `Update failed: ${last.error || "unknown error"}`);
+    $("update-msg").className = last.status === "updated" || last.status === "current" ? "ok" : "muted";
+  }
+  const fresh = last.status === "updated" && Date.now() - new Date(last.checked_at).getTime() < 15 * 60 * 1000;
+  $("updated-banner").hidden = !fresh;
+  if (fresh) $("updated-banner").textContent = `Updated to the newest version: ${(last.installed || {}).message || ""}`;
+}
+$("auto-update").onchange = () => api("/api/settings", { auto_update: $("auto-update").checked }).catch(() => {});
+$("update-now").onclick = async () => {
+  $("update-now").disabled = true; $("update-msg").textContent = "Checking…"; $("update-msg").className = "muted";
+  try {
+    const r = await api("/api/update", {});
+    if (r.status === "updated") { $("update-msg").textContent = "Updated. Close this tab and open the app again to use it."; $("update-msg").className = "ok"; }
+    else { $("update-msg").textContent = UPDATE_TEXT[r.status] || `Update failed: ${r.error || "unknown error"}`; $("update-msg").className = r.status === "current" ? "ok" : "bad"; }
+    $("ver-summary").textContent = r.installed && r.installed.commit ? `${r.installed.commit.slice(0, 7)} from ${shortDate(r.installed.date)}` : $("ver-summary").textContent;
+  } catch (e) { $("update-msg").textContent = e.message; $("update-msg").className = "bad"; }
+  $("update-now").disabled = false;
+};
+$("tire-save").onclick = async () => {
+  try {
+    showTires(await api("/api/settings", { tire_in: +$("tire-in").value, pcm_tire_in: +$("pcm-tire-in").value }));
+    $("tire-msg").textContent = "Saved. Applies to the next recording."; $("tire-msg").className = "ok";
+  } catch (e) { $("tire-msg").textContent = e.message; $("tire-msg").className = "bad"; }
+};
 $("mon-view").onclick = () => window.open(`/view?f=${encodeURIComponent(mon.folder + "/report.md")}`, "_blank");
 $("mon-open").onclick = () => api("/api/open", { folder: mon.folder });
 
 (async () => {
+  api("/api/settings").then(t => { showTires(t); $("auto-update").checked = t.auto_update !== false; }).catch(() => {});
+  api("/api/version").then(showVersion).catch(() => {});
   const saved = await api("/api/layout").catch(() => ({}));
   if (saved.tiles && saved.tiles.length) tiles = saved.tiles;
   if (saved.window) { windowS = saved.window; $("window").value = String(saved.window); }

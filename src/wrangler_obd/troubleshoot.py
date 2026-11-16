@@ -20,10 +20,16 @@ from typing import Mapping, Sequence
 
 Sample = tuple[float, Mapping[str, float]]
 
+from . import alerts
+
 WARM_C = 80.0
 TRIM_LIMIT = 8.0       #: total (short + long) fuel trim, percent
 BANK_SPLIT = 6.0       #: difference between banks, percent
 MIN_SECONDS = 20.0     #: time in a condition before its rules are trusted
+IDLE_SETTLE_S = 3.0    #: idle must hold this long before it counts (skips the dip back from a blip)
+CRUISE_SETTLE_S = 5.0  #: cruise must hold this long (skips the seconds after coasting or a fuel cut)
+CAT_WARM_RUN_S = 300.0 #: the converter is not judged in the first minutes after a start
+VOLTS_WINDOW_S = 30.0  #: charging voltage is judged on a rolling median over this long
 
 
 def _mean(rows: Sequence[Mapping[str, float]], key: str) -> float | None:
@@ -31,20 +37,118 @@ def _mean(rows: Sequence[Mapping[str, float]], key: str) -> float | None:
     return statistics.fmean(vals) if vals else None
 
 
-def _seconds(samples: Sequence[Sample], pick) -> float:
+def _seconds(samples: Sequence[Sample], chosen: Sequence[Sample]) -> float:
+    """Time covered by the chosen samples (gaps over 30 s are not counted)."""
+    times = {t for t, _ in chosen}
     total = 0.0
-    for (t0, v0), (t1, _) in zip(samples, samples[1:]):
-        if pick(v0) and 0 < t1 - t0 < 30:
+    for (t0, _), (t1, _) in zip(samples, samples[1:]):
+        if t0 in times and 0 < t1 - t0 < 30:
             total += t1 - t0
     return total
 
 
-def _is_idle(v: Mapping[str, float]) -> bool:
-    return v.get("coolant_temp", 0) >= WARM_C and v.get("speed", 1) < 1 and 400 < v.get("rpm", 0) < 1000
+def rest_levels(rows: Sequence[Mapping[str, float]]) -> dict[str, float]:
+    """Lowest pedal and relative throttle seen: the foot-off positions on this truck."""
+    out = {}
+    for key in ("pedal_d", "throttle_relative"):
+        vals = [r[key] for r in rows if key in r]
+        if vals:
+            out[key] = min(vals)
+    return out
 
 
-def _is_cruise(v: Mapping[str, float]) -> bool:
-    return v.get("coolant_temp", 0) >= WARM_C and v.get("speed", 0) >= 40 and v.get("throttle", 0) < 40
+def foot_off(v: Mapping[str, float], rest: Mapping[str, float]) -> bool | None:
+    """True when the accelerator is released, None when the truck does not say."""
+    for key in ("pedal_d", "throttle_relative"):
+        if key in v and key in rest:
+            return v[key] <= rest[key] + 2.0
+    return None
+
+
+def held(samples: Sequence[Sample], pred, hold_s: float) -> list[Sample]:
+    """Samples where ``pred`` has been true without a break for at least ``hold_s``."""
+    out: list[Sample] = []
+    since: float | None = None
+    for t, v in samples:
+        if pred(v):
+            since = t if since is None else since
+            if t - since >= hold_s:
+                out.append((t, v))
+        else:
+            since = None
+    return out
+
+
+def settled_idle(samples: Sequence[Sample], rest: Mapping[str, float] | None = None) -> list[Sample]:
+    """Warm idle, stopped, foot off the pedal, settled for a few seconds."""
+    rest = rest_levels([v for _, v in samples]) if rest is None else rest
+
+    def pick(v: Mapping[str, float]) -> bool:
+        return (v.get("coolant_temp", 0) >= WARM_C and v.get("speed", 1) < 1 and 400 < v.get("rpm", 0) < 1000
+                and foot_off(v, rest) is not False)
+
+    return held(samples, pick, IDLE_SETTLE_S)
+
+
+def steady_cruise(samples: Sequence[Sample], rest: Mapping[str, float] | None = None) -> list[Sample]:
+    """Warm, 40 km/h (25 mph) or more, foot on the pedal, held for a few seconds.
+
+    Coasting is left out: the PCM cuts fuel then, which sends every O2 sensor
+    to 0 V and says nothing about the mixture or the converter.
+    """
+    rest = rest_levels([v for _, v in samples]) if rest is None else rest
+
+    def pick(v: Mapping[str, float]) -> bool:
+        if v.get("coolant_temp", 0) < WARM_C or v.get("speed", 0) < 40 or v.get("throttle", 0) >= 40:
+            return False
+        off = foot_off(v, rest)
+        return not off if off is not None else v.get("engine_load", 100) >= 20
+
+    return held(samples, pick, CRUISE_SETTLE_S)
+
+
+def sustained_volts(samples: Sequence[Sample]) -> tuple[float, float | None] | None:
+    """Highest rolling-median charging voltage with the engine running, and the air temperature then.
+
+    A median over 30 seconds ignores the brief peaks a big stereo or a
+    cooling fan switching on can cause, so only a voltage that stays high
+    counts.
+    """
+    running = [(t, v) for t, v in samples if v.get("rpm", 0) > 400 and "module_voltage" in v]
+    best: tuple[float, float | None] | None = None
+    start = 0
+    for i, (t, v) in enumerate(running):
+        while running[start][0] < t - VOLTS_WINDOW_S:
+            start += 1
+        part = running[start : i + 1]
+        if t - part[0][0] < VOLTS_WINDOW_S * 0.8:
+            continue
+        med = statistics.median(x["module_voltage"] for _, x in part)
+        if best is None or med > best[0]:
+            temps = [alerts.air_temp(x) for _, x in part]
+            temps = [x for x in temps if x is not None]
+            best = (med, statistics.median(temps) if temps else None)
+    return best
+
+
+def catalyst_temps_estimated(rows: Sequence[Mapping[str, float]]) -> bool:
+    """Both banks' converter temperatures match nearly all the time: a PCM estimate, not sensors.
+
+    The two are read one after the other, so while the value is changing
+    fast a few pairs differ slightly; 95% matching within 1 °C counts.
+    """
+    pairs = [(r["cat_temp_b1"], r["cat_temp_b2"]) for r in rows if "cat_temp_b1" in r and "cat_temp_b2" in r]
+    return len(pairs) >= 10 and sum(abs(a - b) <= 1.0 for a, b in pairs) >= 0.95 * len(pairs)
+
+
+def _crossings(vals: Sequence[float], level: float = 0.45) -> int:
+    return sum(1 for a, b in zip(vals, vals[1:]) if (a - level) * (b - level) < 0)
+
+
+def _spread(vals: Sequence[float]) -> float:
+    """Middle 80% range: ignores the odd outlier at either end."""
+    s = sorted(vals)
+    return s[int(0.9 * (len(s) - 1))] - s[int(0.1 * (len(s) - 1))]
 
 
 def _total_trim(rows: Sequence[Mapping[str, float]], bank: str) -> float | None:
@@ -61,10 +165,11 @@ def _cause(ident: str, title: str, score: int, evidence: list[str], next_check: 
 def evaluate(samples: Sequence[Sample], stored_codes: Sequence[str] = (), pending_codes: Sequence[str] = ()) -> dict:
     """Return ``{"causes": [...], "coverage": {...}, "notes": [...]}`` for a window of samples."""
     rows = [v for _, v in samples]
-    idle = [v for v in rows if _is_idle(v)]
-    cruise = [v for v in rows if _is_cruise(v)]
+    rest = rest_levels(rows)
+    idle_samples, cruise_samples = settled_idle(samples, rest), steady_cruise(samples, rest)
+    idle, cruise = [v for _, v in idle_samples], [v for _, v in cruise_samples]
     running = [v for v in rows if v.get("rpm", 0) > 400]
-    idle_s, cruise_s = _seconds(samples, _is_idle), _seconds(samples, _is_cruise)
+    idle_s, cruise_s = _seconds(samples, idle_samples), _seconds(samples, cruise_samples)
     have_idle, have_cruise = idle_s >= MIN_SECONDS, cruise_s >= MIN_SECONDS
     codes = set(stored_codes) | set(pending_codes)
     causes: list[dict] = []
@@ -160,10 +265,16 @@ def evaluate(samples: Sequence[Sample], stored_codes: Sequence[str] = (), pendin
                 [f"System voltage averages {volts:.1f} V with the engine running. Expected 13.5-14.8 V."],
                 "Check the belt and battery terminals, then test alternator output with a meter at the battery.",
             ))
-        elif volts > 15.1:
+    high = sustained_volts(samples)
+    if high is not None:
+        peak, temp = high
+        limit = alerts.volts_high_limit(temp)
+        if peak >= limit:
+            at = f" at about {temp:.0f} °C" if temp is not None else ""
             causes.append(_cause(
                 "charging_high", "Overcharging (voltage regulation)", 80,
-                [f"System voltage averages {volts:.1f} V with the engine running."],
+                [f"System voltage held at {peak:.1f} V for 30 seconds or more{at}. The normal limit then is "
+                 f"{limit:.1f} V (the PCM charges a cold battery a little higher)."],
                 "On this truck the PCM regulates the alternator: check the battery temperature sensor and grounds.",
             ))
 
@@ -180,20 +291,30 @@ def evaluate(samples: Sequence[Sample], stored_codes: Sequence[str] = (), pendin
                 "If fuel trims on that bank are also far off, fix the mixture first. Otherwise suspect the sensor "
                 "or its wiring.",
             ))
-    if have_cruise:
-        for up, down, name in (("o2_b1s1", "o2_b1s2", "bank 1"), ("o2_b2s1", "o2_b2s2", "bank 2")):
-            u = [v[up] for v in cruise if up in v]
-            d = [v[down] for v in cruise if down in v]
-            if len(d) >= 40 and len(u) >= 40 and max(u) - min(u) >= 0.4 and max(d) - min(d) >= 0.5:
-                code = {"bank 1": "P0420", "bank 2": "P0430"}[name]
-                causes.append(_cause(
-                    f"catalyst_{down}", f"Catalytic converter on {name} may be worn", 45 + (35 if code in codes else 0),
-                    [f"The downstream O2 sensor swings {max(d) - min(d):.2f} V at cruise, nearly as much as the upstream "
-                     "one. Behind a working converter it should hold fairly steady."]
-                    + ([f"Code {code} is present."] if code in codes else []),
-                    "Check the Mode 06 catalyst test result and rule out exhaust leaks and misfires first, since "
-                    "both mimic this.",
-                ))
+    # The converter is judged only in steady cruise once it has had time to
+    # light off. A good converter stores oxygen, so its downstream sensor
+    # switches far less often than the upstream one; a worn one copies it.
+    cat_rows = [v for v in cruise if v.get("run_time", CAT_WARM_RUN_S) >= CAT_WARM_RUN_S]
+    for up, down, name in (("o2_b1s1", "o2_b1s2", "bank 1"), ("o2_b2s1", "o2_b2s2", "bank 2")):
+        u = [v[up] for v in cat_rows if up in v]
+        d = [v[down] for v in cat_rows if down in v]
+        if len(d) < 40 or len(u) < 40 or _crossings(u) < 20:
+            continue
+        ratio = _crossings(d) / _crossings(u)
+        # The switch ratio is what decides: a healthy converter's downstream
+        # sensor can drift slowly across 0.5 V or more (oxygen storage filling
+        # and emptying) while still switching rarely.
+        if ratio >= 0.5:
+            code = {"bank 1": "P0420", "bank 2": "P0430"}[name]
+            causes.append(_cause(
+                f"catalyst_{down}", f"Catalytic converter on {name} may be worn", 45 + (35 if code in codes else 0),
+                [f"In steady warm cruise the downstream O2 sensor switched {_crossings(d)} times for the upstream "
+                 f"sensor's {_crossings(u)} (ratio {ratio:.2f}) and spanned {_spread(d):.2f} V. Behind a working "
+                 "converter it switches rarely and holds fairly steady (ratio well under 0.5)."]
+                + ([f"Code {code} is present."] if code in codes else []),
+                "Check the Mode 06 catalyst test result and rule out exhaust leaks and misfires first, since "
+                "both mimic this.",
+            ))
 
     # -- idle quality, EGR, misfires -----------------------------------------
     idle_rpm = [v["rpm"] for v in idle if "rpm" in v]
@@ -239,8 +360,12 @@ def evaluate(samples: Sequence[Sample], stored_codes: Sequence[str] = (), pendin
         notes.append("Idle checks need about 20 seconds of warm idle (stopped, engine at temperature).")
     if not have_cruise:
         notes.append("Cruise checks need about 20 seconds at a steady 25 mph or more with the engine warm.")
+    if catalyst_temps_estimated(rows):
+        notes.append("Catalyst temperatures are identical on both banks, so they are the PCM's estimate, not "
+                     "measured by a sensor.")
     return {
         "causes": causes,
-        "coverage": {"warm_idle_s": round(idle_s), "cruise_s": round(cruise_s), "samples": len(rows)},
+        "coverage": {"warm_idle_s": round(idle_s), "cruise_s": round(cruise_s), "samples": len(rows),
+                     "catalyst_temps_estimated": catalyst_temps_estimated(rows)},
         "notes": notes,
     }

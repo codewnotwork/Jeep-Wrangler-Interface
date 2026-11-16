@@ -6,6 +6,11 @@ Chrysler-specific extras that answered. Samples go to ``log.csv`` (metric)
 and to an in-memory buffer the dashboard draws from. Live troubleshooting
 runs over the recent window every few seconds. On stop it writes the
 report (Markdown + JSON) for a person or an LLM.
+
+Codes, readiness monitors, Mode 06 results and the protocol are read
+first, before recording starts, so a connection that drops later (key
+off, cable pulled) cannot lose them. They are read again at the end when
+the truck still answers, since Mode 06 results update during a drive.
 """
 
 from __future__ import annotations
@@ -32,8 +37,13 @@ MIN_INTERVAL_S = 0.05
 
 
 class Monitor:
-    def __init__(self, elm: Elm327, out: Path, notes: str = "", speed_factor: float = 1.0) -> None:
+    def __init__(self, elm: Elm327, out: Path, notes: str = "", speed_factor: float = 1.0,
+                 tires: dict | None = None) -> None:
         self.elm, self.out, self.notes, self.speed_factor = elm, Path(out), notes, speed_factor
+        #: Tire diameters behind ``speed_factor``, recorded in the report.
+        self.tires = tires
+        self.start_info: dict | None = None
+        self.phase = "starting"
         self.samples: deque[tuple[float, dict[str, float]]] = deque(maxlen=BUFFER)
         self.markers: list[dict] = []
         self.analysis: dict = {"causes": [], "coverage": {}, "notes": []}
@@ -76,12 +86,17 @@ class Monitor:
         keys = [k for k in PIDS if PIDS[k].pid in supported]
         fast = [k for k in keys if k not in report.SLOW_PIDS]
         slow = [k for k in keys if k in report.SLOW_PIDS]
-        answered = {x["key"] for x in extras.probe(self.elm)}
+        self.phase = "reading"
+        manufacturer = extras.probe(self.elm)
+        # Save the one-shot data now, so a dropped connection later can't lose it.
+        self.start_info = report.read_vehicle(self.elm, manufacturer)
+        answered = {x["key"] for x in manufacturer}
         found = [e for e in extras.EXTRAS if e.key in answered]
         self.catalog = [{"key": k, "name": PIDS[k].name, "unit": PIDS[k].unit} for k in keys]
         self.catalog += [{"key": f"x_{e.key}", "name": f"{e.name} (unconfirmed)", "unit": e.unit} for e in found]
-        dtcs = self.elm.read_dtcs()
-        self._codes = (dtcs.stored, dtcs.pending)
+        dtcs = self.start_info.get("dtcs")
+        self._codes = (dtcs.stored, dtcs.pending) if dtcs else ([], [])
+        self.phase = "recording"
         return fast, slow, found
 
     def _read_extras(self, found: list[extras.Extra]) -> dict[str, float]:
@@ -158,10 +173,13 @@ class Monitor:
         step = max(1, len(data) // max_points)
         out = []
         for t, values in data[::step]:
-            out.append([t, {k: round(to_imperial(v, units.get(k, ""))[0], 3) for k, v in values.items()}])
+            row = {k: round(to_imperial(v, units.get(k, ""))[0], 3) for k, v in values.items()}
+            if "speed" in row:
+                row["speed"] = round(row["speed"] * self.speed_factor, 3)  # corrected for tire size
+            out.append([t, row])
         duration = (self.finished or time.time()) - self.started
         return {
-            "running": self.running, "saving": self.saving, "error": self.error,
+            "running": self.running, "saving": self.saving, "error": self.error, "phase": self.phase,
             "elapsed": round(duration, 1), "count": self.count,
             "rate": round(self.count / duration, 1) if duration > 0 else 0,
             "catalog": [{**c, "unit": to_imperial(0, c["unit"])[1]} for c in self.catalog],
@@ -176,18 +194,43 @@ class Monitor:
         if not data:
             return
         duration = data[-1][0] - data[0][0]
-        summary = report.summarize_log([v for _, v in data], duration)
+        summary = report.summarize_log(data, duration)
         mpg = economy.summarize(data, self.speed_factor)
         analysis = troubleshoot.evaluate(data, *self._codes)
         self.analysis = analysis
+        info, when = None, "end of recording"
         try:
-            doc = report.build_report(self.elm, summary, "log.csv", notes=self.notes, fuel_economy=mpg)
-        except (ElmError, TransportError):
-            # The truck is gone (key off, cable out): save what the log alone can tell.
+            info = report.read_vehicle(self.elm, (self.start_info or {}).get("manufacturer"))
+        except Exception:
+            info = None
+        if info is None or info.get("status") is None:
+            # The truck is gone or not answering (key off, cable out): use what was read at the start.
+            info, when = self.start_info, "start of recording (the truck stopped answering before the end)"
+        elif self.start_info:
+            # Fill anything the end read missed from the start read.
+            info = {k: (v if v not in (None, {}, []) else self.start_info.get(k)) for k, v in info.items()}
+        if info is None:
             doc = report.offline_report(summary, "log.csv", notes=self.notes, fuel_economy=mpg)
+        else:
+            if not info.get("snapshot") and self.start_info and self.start_info.get("snapshot"):
+                info = {**info, "snapshot": self.start_info["snapshot"]}
+            doc = report.assemble_report(info, summary, "log.csv", notes=self.notes, fuel_economy=mpg)
+            doc["vehicle_data_read_at"] = f"{info.get('read_at')} ({when})"
+        if not doc["snapshot"]:
+            # Nothing could be read at all: the last recorded values are the next best thing.
+            last: dict[str, float] = {}
+            for _, values in data:
+                last.update(values)
+            doc["snapshot"] = {k: {"value": round(v, 2), "unit": report._label(k)[1], "name": report._label(k)[0]}
+                               for k, v in last.items()}
+            doc["snapshot_source"] = "last recorded values"
+        seen = {k for _, values in data for k in values}
+        doc["not_reported"] = [{"key": c["key"], "name": c["name"]} for c in self.catalog if c["key"] not in seen]
+        if self.tires:
+            doc["tire_correction"] = {**self.tires, "speed_factor": round(self.speed_factor, 4)}
         doc["likely_causes"] = analysis
         doc["markers"] = list(self.markers)
-        doc["segments_between_markers"] = report.segments_between(data, self.markers)
+        doc["segments_between_markers"] = report.segments_between(data, self.markers, self.speed_factor)
         (self.out / "report.json").write_text(report.to_json(doc), encoding="utf-8")
         (self.out / "report.md").write_text(report.to_markdown(doc), encoding="utf-8")
         (self.out / "markers.json").write_text(json.dumps(self.markers, indent=2), encoding="utf-8")

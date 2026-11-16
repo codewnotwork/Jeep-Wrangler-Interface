@@ -233,7 +233,10 @@ class Elm327:
         pid = PIDS[key]
         for m in self._service_response(pid.command + ("1" if self.fast else "")):
             if len(m) >= 2 + pid.nbytes and m[1] == pid.pid:
-                return Reading(pid, pid.decode(m[2 : 2 + pid.nbytes]))
+                data = m[2 : 2 + pid.nbytes]
+                if pid.is_no_data(data):
+                    return None  # the PCM answered with its "not available" value
+                return Reading(pid, pid.decode(data))
         return None
 
     def read_pids(self, keys: list[str]) -> dict[str, Reading]:
