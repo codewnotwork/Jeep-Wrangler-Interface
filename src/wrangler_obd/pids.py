@@ -18,6 +18,17 @@ class Pid:
     unit: str
     nbytes: int
     decode: Callable[[Sequence[int]], float]
+    #: Raw value that means "not available" on this truck rather than a reading.
+    #: The JK reports 0xFFFF for distance since codes cleared, for example.
+    no_data: int | None = None
+
+    def is_no_data(self, data: Sequence[int]) -> bool:
+        if self.no_data is None:
+            return False
+        raw = 0
+        for b in data[: self.nbytes]:
+            raw = raw * 256 + b
+        return raw == self.no_data
 
     @property
     def command(self) -> str:
@@ -62,14 +73,14 @@ _DEFS = [
     Pid(0x15, "o2_b1s2", "O2 sensor voltage, bank 1 sensor 2", "V", 2, _o2_volts),
     Pid(0x18, "o2_b2s1", "O2 sensor voltage, bank 2 sensor 1", "V", 2, _o2_volts),
     Pid(0x19, "o2_b2s2", "O2 sensor voltage, bank 2 sensor 2", "V", 2, _o2_volts),
-    Pid(0x1F, "run_time", "Run time since engine start", "s", 2, lambda d: float(_word(d))),
-    Pid(0x21, "dist_mil_on", "Distance driven with check engine light on", "km", 2, lambda d: float(_word(d))),
+    Pid(0x1F, "run_time", "Run time since engine start", "s", 2, lambda d: float(_word(d)), 0xFFFF),
+    Pid(0x21, "dist_mil_on", "Distance driven with check engine light on", "km", 2, lambda d: float(_word(d)), 0xFFFF),
     Pid(0x2C, "egr_cmd", "Commanded EGR", "%", 1, _pct),
     Pid(0x2D, "egr_err", "EGR error", "%", 1, _trim),
     Pid(0x2E, "evap_purge", "Commanded EVAP purge", "%", 1, _pct),
     Pid(0x2F, "fuel_level", "Fuel tank level", "%", 1, _pct),
     Pid(0x30, "warmups_since_clear", "Warm-ups since codes cleared", "count", 1, lambda d: float(d[0])),
-    Pid(0x31, "dist_since_clear", "Distance since codes cleared", "km", 2, lambda d: float(_word(d))),
+    Pid(0x31, "dist_since_clear", "Distance since codes cleared", "km", 2, lambda d: float(_word(d)), 0xFFFF),
     Pid(0x33, "baro", "Barometric pressure", "kPa", 1, lambda d: float(d[0])),
     Pid(0x3C, "cat_temp_b1", "Catalyst temperature, bank 1", "°C", 2, lambda d: _word(d) / 10.0 - 40.0),
     Pid(0x3D, "cat_temp_b2", "Catalyst temperature, bank 2", "°C", 2, lambda d: _word(d) / 10.0 - 40.0),

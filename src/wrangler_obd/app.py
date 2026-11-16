@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import cli
+from . import cli, economy
 from .elm327 import Elm327, ElmError
 from .monitor import Monitor
 from .simulator import SimulatedTransport
@@ -40,6 +40,11 @@ IDLE_PRESETS = {
 }
 STEP_SECONDS = {"pedal": 45, "idle": 180}
 QUIET_SHUTDOWN_S = 120
+
+#: Tire diameters in inches. The 2010 Sahara left the factory on 255/70R18
+#: tires (about 32.1 in), and the PCM computes speed for that size unless a
+#: dealer or tuner reprogrammed it.
+DEFAULT_SETTINGS = {"tire_in": 33.0, "pcm_tire_in": 32.1}
 
 
 def default_data_dir() -> Path:
@@ -171,17 +176,52 @@ class App:
 
     # -- monitor ---------------------------------------------------------------
 
-    def start_monitor(self, notes: str = "", speed_factor: float = 1.0) -> None:
+    def start_monitor(self, notes: str = "") -> None:
         if not self.elm:
             raise RuntimeError("Connect to the adapter first.")
         if self.busy():
             raise RuntimeError("Something is already running. Stop it first.")
-        self.monitor = Monitor(self.elm, self._folder("monitor"), notes=notes, speed_factor=speed_factor)
+        tires = self.settings()
+        self.monitor = Monitor(self.elm, self._folder("monitor"), notes=notes[:2000],
+                               speed_factor=self.speed_factor(), tires=tires)
         self.monitor.start()
 
-    def stop_monitor(self) -> None:
+    def stop_monitor(self, notes: str | None = None) -> None:
         if self.monitor:
+            if notes is not None:
+                self.monitor.notes = notes[:2000]  # saved with the report
             self.monitor.stop()
+
+    # -- settings ---------------------------------------------------------------
+
+    def _settings_file(self) -> Path:
+        return self.data_dir / "settings.json"
+
+    def settings(self) -> dict:
+        """Tire diameters in inches: what is on the truck, and what the PCM is set up for."""
+        out = dict(DEFAULT_SETTINGS)
+        try:
+            saved = json.loads(self._settings_file().read_text(encoding="utf-8"))
+            for key in out:
+                if isinstance(saved.get(key), (int, float)) and 20 <= saved[key] <= 50:
+                    out[key] = float(saved[key])
+        except (OSError, ValueError):
+            pass
+        return out
+
+    def save_settings(self, body: dict) -> dict:
+        new = {}
+        for key in DEFAULT_SETTINGS:
+            value = float(body.get(key) or 0)
+            if not 20 <= value <= 50:
+                raise ValueError("Tire diameters should be in inches, between 20 and 50.")
+            new[key] = round(value, 2)
+        self._settings_file().write_text(json.dumps(new), encoding="utf-8")
+        return new
+
+    def speed_factor(self) -> float:
+        s = self.settings()
+        return economy.tire_speed_factor(s["tire_in"], s["pcm_tire_in"])
 
     def _layout_file(self) -> Path:
         return self.data_dir / "layout.json"
@@ -203,7 +243,10 @@ class App:
             return {}
         try:
             r = self.elm.read_pids(["rpm", "coolant_temp", "speed", "module_voltage"])
-            return {k: round(v.value, 1) for k, v in r.items()}
+            out = {k: round(v.value, 1) for k, v in r.items()}
+            if "speed" in out:
+                out["speed"] = round(out["speed"] * self.speed_factor(), 1)  # corrected for tire size
+            return out
         except (ElmError, TransportError):
             return {}
         finally:
@@ -224,8 +267,7 @@ class App:
             minutes = max(1, min(180, int(options.get("minutes") or 30)))
             out = self._folder("drive")
             argv = ["report", "--out", str(out), "--duration", str(minutes * 60), "--notes", notes or "drive"]
-            if options.get("speed_factor"):
-                argv += ["--speed-factor", str(float(options["speed_factor"]))]
+            argv += ["--speed-factor", f"{self.speed_factor():.4f}"]
             return f"Drive recording ({minutes} min)", argv, minutes * 60, out
         if step in IDLE_PRESETS:
             out = self._folder(step)
@@ -390,6 +432,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"exists": False} if m is None else {"exists": True, **m.display(since)})
         if url.path == "/api/layout":
             return self._json(self.app.layout())
+        if url.path == "/api/settings":
+            return self._json(self.app.settings())
         if url.path == "/api/live":
             return self._json(self.app.live())
         if url.path == "/view":
@@ -422,9 +466,11 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/run":
                 app.start(body.get("step", ""), body)
             elif path == "/api/monitor/start":
-                app.start_monitor(body.get("notes") or "", float(body.get("speed_factor") or 1.0))
+                app.start_monitor(str(body.get("notes") or ""))
             elif path == "/api/monitor/stop":
-                app.stop_monitor()
+                app.stop_monitor(str(body["notes"]) if "notes" in body else None)
+            elif path == "/api/settings":
+                return self._json(app.save_settings(body))
             elif path == "/api/monitor/marker":
                 if not app.monitoring():
                     raise RuntimeError("Start monitoring first.")

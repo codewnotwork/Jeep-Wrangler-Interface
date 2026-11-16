@@ -57,6 +57,11 @@
   select, input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
                   background: var(--card); color: var(--ink); min-width: 0; }
   input.notes { flex: 1 1 240px; }
+  input.inch { width: 5.5em; }
+  details.settings { margin-top: 2px; font-size: 14px; color: var(--muted); }
+  details.settings summary { cursor: pointer; }
+  details.settings .row { margin-top: 8px; color: var(--ink); }
+  details.settings p { margin: 8px 0 0; }
   .vehicle { font-size: 14px; color: var(--muted); margin-top: 8px; }
   .vehicle b { color: var(--ink); font-weight: 600; }
   .error { color: var(--bad); font-size: 14px; margin-top: 8px; }
@@ -155,6 +160,22 @@
       <button class="danger" id="mon-stop" hidden>Stop and save</button>
       <span id="mon-status" class="muted">Records every reading the truck supports. Connect first.</span>
     </div>
+    <div class="row">
+      <input class="notes" id="mon-notes" maxlength="2000" aria-label="Notes for this recording"
+             placeholder="Notes (optional): stereo on, A/C on, route, weather. Saved with the report.">
+    </div>
+    <details class="settings">
+      <summary>Tire size: <span id="tire-summary">loading…</span></summary>
+      <div class="row">
+        <label>Tires on the truck <input class="inch" id="tire-in" type="number" step="0.1" min="20" max="50"> in</label>
+        <label>Size the truck is set for <input class="inch" id="pcm-tire-in" type="number" step="0.1" min="20" max="50"> in</label>
+        <button id="tire-save">Save</button>
+        <span id="tire-msg"></span>
+      </div>
+      <p>Stock 2010 Sahara tires (255/70R18) are about 32.1 in, and the truck works out speed for that size unless
+        a dealer or tuner changed it. If that was done, or the speedometer already matches a GPS, enter the same
+        size in both boxes. The speed tile, distance and mpg use the correction; log.csv keeps the truck's own numbers.</p>
+    </details>
     <div class="row" id="mon-tools" hidden>
       <input class="notes" id="marker-text" placeholder="Marker: what did you just change? (e.g. unplugged purge valve)" maxlength="200">
       <button id="marker-add">Add marker</button>
@@ -561,7 +582,9 @@ function renderMonitorControls(r) {
   $("mon-tools").hidden = !running;
   if (!r) { $("mon-status").textContent = connected ? "Ready. Records every reading the truck supports." : "Records every reading the truck supports. Connect first."; $("mon-saved").hidden = true; return; }
   if (running) {
-    $("mon-status").textContent = `Recording ${r.catalog.length} readings · ${fmt(r.elapsed)} · ${r.count.toLocaleString()} samples (${r.rate} per second)`;
+    $("mon-status").textContent = r.phase !== "recording"
+      ? "Reading codes, readiness and on-board test results first…"
+      : `Recording ${r.catalog.length} readings · ${fmt(r.elapsed)} · ${r.count.toLocaleString()} samples (${r.rate} per second)`;
     $("mon-status").className = "ok"; $("mon-saved").hidden = true;
   } else {
     $("mon-status").textContent = r.error || (r.saving ? "Saving…" : "Stopped.");
@@ -572,10 +595,10 @@ function renderMonitorControls(r) {
 }
 
 $("mon-start").onclick = async () => {
-  try { await api("/api/monitor/start", {}); } catch (e) { $("mon-status").textContent = e.message; $("mon-status").className = "bad"; }
+  try { await api("/api/monitor/start", { notes: $("mon-notes").value }); } catch (e) { $("mon-status").textContent = e.message; $("mon-status").className = "bad"; }
   pollMonitor(); poll();
 };
-$("mon-stop").onclick = async () => { $("mon-stop").disabled = true; await api("/api/monitor/stop", {}).catch(() => {}); setTimeout(() => { $("mon-stop").disabled = false; }, 3000); };
+$("mon-stop").onclick = async () => { $("mon-stop").disabled = true; await api("/api/monitor/stop", { notes: $("mon-notes").value }).catch(() => {}); setTimeout(() => { $("mon-stop").disabled = false; }, 3000); };
 $("marker-add").onclick = async () => {
   const text = $("marker-text").value.trim() || "Marker";
   try { await api("/api/monitor/marker", { text }); $("marker-text").value = ""; pollMonitor(); } catch (e) { $("mon-status").textContent = e.message; }
@@ -585,10 +608,24 @@ $("window").onchange = () => { windowS = +$("window").value; saveLayout(); drawT
 $("tile-add").onclick = () => { const k = $("tile-pick").value; if (!catalogEntry(k)) return; tiles = (tiles || []).concat(k); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
 $("tile-all").onclick = () => { tiles = mon.catalog.map(c => c.key); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
 $("tile-reset").onclick = () => { tiles = DEFAULT_TILES.filter(k => catalogEntry(k)); saveLayout(); buildTiles(); renderPicker(); drawTiles(); };
+function showTires(t) {
+  $("tire-in").value = t.tire_in; $("pcm-tire-in").value = t.pcm_tire_in;
+  const f = t.tire_in / t.pcm_tire_in;
+  $("tire-summary").textContent = Math.abs(f - 1) < 0.001
+    ? `${t.tire_in} in, no correction`
+    : `${t.tire_in} in on a truck set for ${t.pcm_tire_in} in (speed ×${f.toFixed(3)})`;
+}
+$("tire-save").onclick = async () => {
+  try {
+    showTires(await api("/api/settings", { tire_in: +$("tire-in").value, pcm_tire_in: +$("pcm-tire-in").value }));
+    $("tire-msg").textContent = "Saved. Applies to the next recording."; $("tire-msg").className = "ok";
+  } catch (e) { $("tire-msg").textContent = e.message; $("tire-msg").className = "bad"; }
+};
 $("mon-view").onclick = () => window.open(`/view?f=${encodeURIComponent(mon.folder + "/report.md")}`, "_blank");
 $("mon-open").onclick = () => api("/api/open", { folder: mon.folder });
 
 (async () => {
+  api("/api/settings").then(showTires).catch(() => {});
   const saved = await api("/api/layout").catch(() => ({}));
   if (saved.tiles && saved.tiles.length) tiles = saved.tiles;
   if (saved.window) { windowS = saved.window; $("window").value = String(saved.window); }

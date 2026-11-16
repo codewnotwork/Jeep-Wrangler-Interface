@@ -168,7 +168,7 @@ def cmd_report(elm: Elm327, args: argparse.Namespace) -> None:
                 record(elm, CsvLogger(fh, keys), interval=args.interval, duration=args.duration, on_sample=keep)
             except KeyboardInterrupt:
                 pass
-        summary = report_mod.summarize_log(samples, time.monotonic() - start)
+        summary = report_mod.summarize_log(timed, time.monotonic() - start)
         mpg = economy.summarize(timed, speed_factor, args.fuel_factor)
     data = report_mod.build_report(elm, summary, log_name, notes=args.notes or "", fuel_economy=mpg)
     for name, text in (("report.json", report_mod.to_json(data)), ("report.md", report_mod.to_markdown(data))):

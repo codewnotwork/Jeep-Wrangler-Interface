@@ -38,9 +38,14 @@ Press **Connect**, then use the **Dashboard** tab:
   evidence and the next thing to check. It is a pointer, not a verdict. It needs about
   20 seconds of warm idle, and a few minutes of steady cruising to tell a vacuum leak
   from a fuel delivery problem.
+- **Notes** (optional): anything worth knowing about the recording, such as "stereo on" or "A/C on".
+  You can edit it while recording; it is saved with the report when you press Stop and save.
+- **Tire size**: enter the diameter of the tires on the truck and the size the truck is set up for
+  (stock 2010 Sahara 255/70R18 is about 32.1 in). Speed, distance and mpg are corrected for the
+  difference. If the speedometer already matches a GPS, enter the same size in both.
 - **Stop and save** writes a folder under `Documents\jeep-data` holding `report.md` and
-  `report.json` (written for an AI model or a mechanic to read: codes, statistics for every
-  reading, likely causes, before/after each marker), `log.csv` (every sample) and
+  `report.json` (written for an AI model or a mechanic to read: codes, readiness and on-board
+  test results, statistics for every reading, likely causes, before/after each marker), `log.csv` (every sample) and
   `markers.json`.
 
 The **Guided steps** tab keeps the one-button procedures (pedal map, record a drive, idle
