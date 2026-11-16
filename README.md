@@ -48,6 +48,11 @@ Press **Connect**, then use the **Dashboard** tab:
   test results, statistics for every reading, likely causes, before/after each marker), `log.csv` (every sample) and
   `markers.json`.
 
+**Updates** happen by themselves: each time you open the app with an internet connection, it
+checks GitHub for a newer version and installs it before the window opens (your recordings and
+settings are not touched). Offline, it starts as usual. You can turn this off, or check by hand,
+under "App version" on the Dashboard tab. This needs the GitHub repository to be public.
+
 The **Guided steps** tab keeps the one-button procedures (pedal map, record a drive, idle
 checks, transmission temperature scan, make a ZIP to send).
 
@@ -221,6 +226,7 @@ print(elm.read_dtcs())
 - `scan.py`: finds manufacturer data items (services 21 and 22) on one module
 - `pedal.py`: pedal-to-throttle curve
 - `app.py`, `app.html`: the point-and-click app (local web page)
+- `updater.py`: checks GitHub for a newer version at launch and installs it
 - `monitor.py`: background recorder behind the dashboard (all readings, markers, saved report)
 - `troubleshoot.py`: live fault-pattern rules that rank likely causes
 - `alerts.py`: thresholds for overheat, voltage and fuel trim warnings

@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import cli, economy
+from . import cli, economy, updater
 from .elm327 import Elm327, ElmError
 from .monitor import Monitor
 from .simulator import SimulatedTransport
@@ -44,7 +44,10 @@ QUIET_SHUTDOWN_S = 120
 #: Tire diameters in inches. The 2010 Sahara left the factory on 255/70R18
 #: tires (about 32.1 in), and the PCM computes speed for that size unless a
 #: dealer or tuner reprogrammed it.
-DEFAULT_SETTINGS = {"tire_in": 33.0, "pcm_tire_in": 32.1}
+DEFAULT_SETTINGS = {"tire_in": 33.0, "pcm_tire_in": 32.1, "auto_update": True}
+
+#: The folder holding the launcher (two levels above this file).
+APP_DIR = Path(__file__).resolve().parents[2]
 
 
 def default_data_dir() -> Path:
@@ -181,7 +184,8 @@ class App:
             raise RuntimeError("Connect to the adapter first.")
         if self.busy():
             raise RuntimeError("Something is already running. Stop it first.")
-        tires = self.settings()
+        settings = self.settings()
+        tires = {"tire_in": settings["tire_in"], "pcm_tire_in": settings["pcm_tire_in"]}
         self.monitor = Monitor(self.elm, self._folder("monitor"), notes=notes[:2000],
                                speed_factor=self.speed_factor(), tires=tires)
         self.monitor.start()
@@ -198,26 +202,47 @@ class App:
         return self.data_dir / "settings.json"
 
     def settings(self) -> dict:
-        """Tire diameters in inches: what is on the truck, and what the PCM is set up for."""
+        """Tire diameters in inches (on the truck, and what the PCM is set up for), and auto-update."""
         out = dict(DEFAULT_SETTINGS)
         try:
             saved = json.loads(self._settings_file().read_text(encoding="utf-8"))
-            for key in out:
-                if isinstance(saved.get(key), (int, float)) and 20 <= saved[key] <= 50:
-                    out[key] = float(saved[key])
         except (OSError, ValueError):
-            pass
+            saved = {}
+        for key in ("tire_in", "pcm_tire_in"):
+            if isinstance(saved.get(key), (int, float)) and 20 <= saved[key] <= 50:
+                out[key] = float(saved[key])
+        if isinstance(saved.get("auto_update"), bool):
+            out["auto_update"] = saved["auto_update"]
         return out
 
     def save_settings(self, body: dict) -> dict:
-        new = {}
-        for key in DEFAULT_SETTINGS:
-            value = float(body.get(key) or 0)
-            if not 20 <= value <= 50:
-                raise ValueError("Tire diameters should be in inches, between 20 and 50.")
-            new[key] = round(value, 2)
+        """Change the settings given in ``body``; the others keep their saved values."""
+        new = self.settings()
+        for key in ("tire_in", "pcm_tire_in"):
+            if key in body:
+                value = float(body.get(key) or 0)
+                if not 20 <= value <= 50:
+                    raise ValueError("Tire diameters should be in inches, between 20 and 50.")
+                new[key] = round(value, 2)
+        if "auto_update" in body:
+            new["auto_update"] = bool(body["auto_update"])
         self._settings_file().write_text(json.dumps(new), encoding="utf-8")
         return new
+
+    # -- updates ------------------------------------------------------------------
+
+    def version(self) -> dict:
+        """The installed version and what happened at the last update check."""
+        try:
+            last = json.loads((self.data_dir / "update.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            last = {}
+        return {"installed": updater.installed(APP_DIR), "last_check": last}
+
+    def update_now(self) -> dict:
+        if self.busy():
+            raise RuntimeError("Stop the recording or step first.")
+        return updater.check_and_update(APP_DIR, self.data_dir / "update.json")
 
     def speed_factor(self) -> float:
         s = self.settings()
@@ -434,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self.app.layout())
         if url.path == "/api/settings":
             return self._json(self.app.settings())
+        if url.path == "/api/version":
+            return self._json(self.app.version())
         if url.path == "/api/live":
             return self._json(self.app.live())
         if url.path == "/view":
@@ -471,6 +498,8 @@ class Handler(BaseHTTPRequestHandler):
                 app.stop_monitor(str(body["notes"]) if "notes" in body else None)
             elif path == "/api/settings":
                 return self._json(app.save_settings(body))
+            elif path == "/api/update":
+                return self._json(app.update_now())
             elif path == "/api/monitor/marker":
                 if not app.monitoring():
                     raise RuntimeError("Start monitoring first.")

@@ -154,6 +154,7 @@
 </div>
 
 <div id="panel-dash" class="dash">
+  <div class="card ok" id="updated-banner" hidden></div>
   <section class="card controls">
     <div class="row">
       <button class="primary" id="mon-start">Start monitoring</button>
@@ -175,6 +176,16 @@
       <p>Stock 2010 Sahara tires (255/70R18) are about 32.1 in, and the truck works out speed for that size unless
         a dealer or tuner changed it. If that was done, or the speedometer already matches a GPS, enter the same
         size in both boxes. The speed tile, distance and mpg use the correction; log.csv keeps the truck's own numbers.</p>
+    </details>
+    <details class="settings">
+      <summary>App version: <span id="ver-summary">checking…</span></summary>
+      <div class="row">
+        <label><input type="checkbox" id="auto-update"> Update automatically when the app starts</label>
+        <button id="update-now">Check for updates now</button>
+        <span id="update-msg"></span>
+      </div>
+      <p>Updates come from GitHub and need an internet connection. Without one (in the truck, for example) the
+        app starts as usual. Your recordings and settings in Documents\jeep-data are never changed.</p>
     </details>
     <div class="row" id="mon-tools" hidden>
       <input class="notes" id="marker-text" placeholder="Marker: what did you just change? (e.g. unplugged purge valve)" maxlength="200">
@@ -615,6 +626,36 @@ function showTires(t) {
     ? `${t.tire_in} in, no correction`
     : `${t.tire_in} in on a truck set for ${t.pcm_tire_in} in (speed ×${f.toFixed(3)})`;
 }
+const UPDATE_TEXT = {
+  current: "You have the latest version.",
+  offline: "Could not reach GitHub (no internet?). Using the installed version.",
+  private: "Updates need the GitHub repository to be public.",
+  developer: "This copy is a git checkout, so it is not updated automatically.",
+};
+function shortDate(iso) { return iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""; }
+function showVersion(v) {
+  const last = v.last_check || {};
+  const inst = (v.installed && v.installed.commit) ? v.installed : (last.installed || {});
+  $("ver-summary").textContent = inst.commit ? `${inst.commit.slice(0, 7)} from ${shortDate(inst.date)}` : "not recorded yet";
+  if (last.status) {
+    $("update-msg").textContent = last.status === "updated" ? "Updated at the last start." : (UPDATE_TEXT[last.status] || `Update failed: ${last.error || "unknown error"}`);
+    $("update-msg").className = last.status === "updated" || last.status === "current" ? "ok" : "muted";
+  }
+  const fresh = last.status === "updated" && Date.now() - new Date(last.checked_at).getTime() < 15 * 60 * 1000;
+  $("updated-banner").hidden = !fresh;
+  if (fresh) $("updated-banner").textContent = `Updated to the newest version: ${(last.installed || {}).message || ""}`;
+}
+$("auto-update").onchange = () => api("/api/settings", { auto_update: $("auto-update").checked }).catch(() => {});
+$("update-now").onclick = async () => {
+  $("update-now").disabled = true; $("update-msg").textContent = "Checking…"; $("update-msg").className = "muted";
+  try {
+    const r = await api("/api/update", {});
+    if (r.status === "updated") { $("update-msg").textContent = "Updated. Close this tab and open the app again to use it."; $("update-msg").className = "ok"; }
+    else { $("update-msg").textContent = UPDATE_TEXT[r.status] || `Update failed: ${r.error || "unknown error"}`; $("update-msg").className = r.status === "current" ? "ok" : "bad"; }
+    $("ver-summary").textContent = r.installed && r.installed.commit ? `${r.installed.commit.slice(0, 7)} from ${shortDate(r.installed.date)}` : $("ver-summary").textContent;
+  } catch (e) { $("update-msg").textContent = e.message; $("update-msg").className = "bad"; }
+  $("update-now").disabled = false;
+};
 $("tire-save").onclick = async () => {
   try {
     showTires(await api("/api/settings", { tire_in: +$("tire-in").value, pcm_tire_in: +$("pcm-tire-in").value }));
@@ -625,7 +666,8 @@ $("mon-view").onclick = () => window.open(`/view?f=${encodeURIComponent(mon.fold
 $("mon-open").onclick = () => api("/api/open", { folder: mon.folder });
 
 (async () => {
-  api("/api/settings").then(showTires).catch(() => {});
+  api("/api/settings").then(t => { showTires(t); $("auto-update").checked = t.auto_update !== false; }).catch(() => {});
+  api("/api/version").then(showVersion).catch(() => {});
   const saved = await api("/api/layout").catch(() => ({}));
   if (saved.tiles && saved.tiles.length) tiles = saved.tiles;
   if (saved.window) { windowS = saved.window; $("window").value = String(saved.window); }

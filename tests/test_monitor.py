@@ -226,7 +226,7 @@ def test_app_monitor_and_layout(tmp_path):
 
 def test_settings_and_notes_at_stop(tmp_path):
     app = App(tmp_path / "d")
-    assert app.settings() == {"tire_in": 33.0, "pcm_tire_in": 32.1}
+    assert app.settings() == {"tire_in": 33.0, "pcm_tire_in": 32.1, "auto_update": True}
     with pytest.raises(ValueError):
         app.save_settings({"tire_in": 840, "pcm_tire_in": 32.1})  # millimetres by mistake
     app.save_settings({"tire_in": 33, "pcm_tire_in": 33})
