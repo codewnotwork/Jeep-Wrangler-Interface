@@ -477,7 +477,7 @@ class CarLogger:
         drive_id, folder = self.store.new()
         start_epoch, synced = time.time(), clock_synced()
         monitor = Monitor(elm, folder, notes=cfg.get("notes", ""), speed_factor=float(cfg.get("speed_factor") or 1.0),
-                          tires=cfg.get("tires"), sync_every_s=float(cfg["sync_every_s"]))
+                          tires=cfg.get("tires"), sync_every_s=float(cfg["sync_every_s"]), live_analysis=False)
         self.idle.clear()
         self.monitor = monitor
         self.state = "recording a drive"
@@ -610,7 +610,10 @@ class CarLogger:
         lost = self.power_lost_at if self.power_lost_at is not None else now
         grace = float(self.cfg["grace_s"])
         if not self.idle.is_set():
-            return now - lost >= grace + 60  # still saving the drive: give it a little longer
+            # Still saving the drive (a long one on a slow Pi can take a minute or two): give it
+            # longer, but stop before the power board's own backstop would cut the power.
+            backstop = float(self.cfg.get("auto_shutdown_min") or 0) * 60 - 30
+            return now - lost >= max(grace + 60, backstop)
         if now - lost >= grace:
             return True
         tried = self.last_upload.get("at") is not None

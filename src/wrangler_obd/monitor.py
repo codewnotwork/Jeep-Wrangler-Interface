@@ -39,11 +39,14 @@ MIN_INTERVAL_S = 0.05
 
 class Monitor:
     def __init__(self, elm: Elm327, out: Path, notes: str = "", speed_factor: float = 1.0,
-                 tires: dict | None = None, sync_every_s: float | None = None) -> None:
+                 tires: dict | None = None, sync_every_s: float | None = None, live_analysis: bool = True) -> None:
         self.elm, self.out, self.notes, self.speed_factor = elm, Path(out), notes, speed_factor
         #: When set, the log is forced onto the disk this often (the in-Jeep logger,
         #: where power can vanish), so a sudden power cut loses only the last few seconds.
         self.sync_every_s = sync_every_s
+        #: Live troubleshooting for the dashboard. The in-Jeep logger turns it off: nobody is
+        #: watching, and on a small Pi it would take time from recording. The saved report still has it.
+        self.live_analysis = live_analysis
         #: Tire diameters behind ``speed_factor``, recorded in the report.
         self.tires = tires
         self.start_info: dict | None = None
@@ -144,7 +147,7 @@ class Monitor:
                         last_sync = tick
                         fh.flush()
                         os.fsync(fh.fileno())
-                    if tick - last_analysis >= ANALYSE_EVERY_S:
+                    if self.live_analysis and tick - last_analysis >= ANALYSE_EVERY_S:
                         last_analysis = tick
                         self.analysis = troubleshoot.evaluate(self.window(ANALYSE_WINDOW_S), *self._codes)
                     spare = MIN_INTERVAL_S - (time.time() - tick)

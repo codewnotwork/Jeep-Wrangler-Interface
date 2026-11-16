@@ -191,7 +191,7 @@ def test_shutdown_after_everything_sent_or_grace(tmp_path):
     lg.last_upload = {"at": 6, "found": True}
     assert lg.ready_to_power_off(7)  # nothing waiting
     lg.idle.clear()
-    assert not lg.ready_to_power_off(110) and lg.ready_to_power_off(170)
+    assert not lg.ready_to_power_off(260) and lg.ready_to_power_off(276)  # saving: up to the board backstop
 
 
 def test_lifepo4wered_reads_input_voltage(monkeypatch):
