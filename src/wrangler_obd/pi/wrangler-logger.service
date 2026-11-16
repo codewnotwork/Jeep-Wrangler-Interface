@@ -1,0 +1,17 @@
+[Unit]
+Description=Wrangler in-Jeep logger (records every drive, sends it to the PC)
+After=local-fs.target
+Wants=network.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=/opt/wrangler/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m wrangler_obd.carlogger --config /etc/wrangler-logger.json
+Restart=always
+RestartSec=5
+# Give a drive in progress time to be saved when the Pi shuts down.
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

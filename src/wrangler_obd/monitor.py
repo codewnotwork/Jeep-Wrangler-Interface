@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import threading
 import time
 from collections import deque
@@ -38,8 +39,14 @@ MIN_INTERVAL_S = 0.05
 
 class Monitor:
     def __init__(self, elm: Elm327, out: Path, notes: str = "", speed_factor: float = 1.0,
-                 tires: dict | None = None) -> None:
+                 tires: dict | None = None, sync_every_s: float | None = None, live_analysis: bool = True) -> None:
         self.elm, self.out, self.notes, self.speed_factor = elm, Path(out), notes, speed_factor
+        #: When set, the log is forced onto the disk this often (the in-Jeep logger,
+        #: where power can vanish), so a sudden power cut loses only the last few seconds.
+        self.sync_every_s = sync_every_s
+        #: Live troubleshooting for the dashboard. The in-Jeep logger turns it off: nobody is
+        #: watching, and on a small Pi it would take time from recording. The saved report still has it.
+        self.live_analysis = live_analysis
         #: Tire diameters behind ``speed_factor``, recorded in the report.
         self.tires = tires
         self.start_info: dict | None = None
@@ -121,7 +128,7 @@ class Monitor:
             with open(self.out / "log.csv", "w", newline="", encoding="utf-8") as fh:
                 writer = csv.writer(fh)
                 writer.writerow(["timestamp", "elapsed_s"] + [f"{c['key']} ({c['unit']})" for c in self.catalog])
-                last_analysis = 0.0
+                last_analysis = last_sync = 0.0
                 self.elm.fast = True
                 while not self._stop.is_set():
                     tick = time.time()
@@ -146,7 +153,11 @@ class Monitor:
                     self.count += 1
                     if self.count % 20 == 0:
                         fh.flush()
-                    if tick - last_analysis >= ANALYSE_EVERY_S:
+                    if self.sync_every_s and tick - last_sync >= self.sync_every_s:
+                        last_sync = tick
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                    if self.live_analysis and tick - last_analysis >= ANALYSE_EVERY_S:
                         last_analysis = tick
                         self.analysis = troubleshoot.evaluate(self.window(ANALYSE_WINDOW_S), *self._codes)
                     spare = MIN_INTERVAL_S - (time.time() - tick)

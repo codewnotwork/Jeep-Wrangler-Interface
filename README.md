@@ -67,6 +67,13 @@ The app runs only on this computer (it is a small local web server, nothing is s
 anywhere) and closes by itself a couple of minutes after its browser tab is closed. The
 first time, run `pip install -e .` in this folder once so `pyserial` is installed.
 
+## In-Jeep logger (Raspberry Pi)
+
+A Raspberry Pi (4 Model B 1 GB, 3, Zero 2 W or Zero W) with a LiFePO4wered/Pi+ power board can live in the Jeep,
+record every drive by itself and send it to the PC over home WiFi. The app's
+**In-Jeep logger** tab installs it on the Pi with one button and lists the drives
+that arrive. Shopping list and setup steps: [docs/raspberry-pi.md](docs/raspberry-pi.md).
+
 ## Install
 
 ```bash
@@ -242,6 +249,9 @@ print(elm.read_dtcs())
 - `report.py`: diagnostic report (JSON + Markdown) and log statistics
 - `simulator.py`: fake ELM327 + JK PCM that speaks the real text protocol
 - `logger.py`, `cli.py`: CSV logging and the `wrangler-obd` command
+- `carlogger.py`: the in-Jeep logger that runs on the Raspberry Pi
+- `sync.py`, `receiver.py`: sending drives from the Pi, and the receiver on the PC
+- `pisetup.py`, `pi/`: installing the logger on the Pi from the app
 
 ## Roadmap
 
