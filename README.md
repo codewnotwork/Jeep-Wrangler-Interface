@@ -62,7 +62,7 @@ first time, run `pip install -e .` in this folder once so `pyserial` is installe
 
 ## In-Jeep logger (Raspberry Pi)
 
-A Raspberry Pi Zero 2 W with a LiFePO4wered/Pi+ power board can live in the Jeep,
+A Raspberry Pi (3 Model A+ or Zero 2 W) with a LiFePO4wered/Pi+ power board can live in the Jeep,
 record every drive by itself and send it to the PC over home WiFi. The app's
 **In-Jeep logger** tab installs it on the Pi with one button and lists the drives
 that arrive. Shopping list and setup steps: [docs/raspberry-pi.md](docs/raspberry-pi.md).

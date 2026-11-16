@@ -11,12 +11,17 @@ app's **In-Jeep logger** tab lists them.
 
 | Part | About | Notes |
 |---|---|---|
-| Raspberry Pi Zero 2 W | $15 | Plus a 2x20 male pin header. Solder it, or use a press-in "GPIO Hammer Header" kit. (The Zero 2 WH has it pre-soldered, if you find one.) |
+| Raspberry Pi **3 Model A+** (or a Zero 2 W) | $25 | The 3 A+ is the easy choice: its pin header is already fitted, and it has a full-size USB port for the OBDLink. A Zero 2 W also works, but needs a 2x20 pin header soldered or pressed in (GPIO Hammer Header), plus the OTG adapter below. |
 | Silicognition **LiFePO4wered/Pi+** | $50–60 | The power board that makes shutdown safe. Buy a listing that **includes the cell**. If you buy the cell separately it must be a **3.2 V LiFePO4** cell of the size listed (usually 18650). A normal 3.7 V lithium cell looks the same and would damage the board. |
 | High-endurance microSD, 32 GB | $10 | SanDisk High Endurance or Samsung PRO Endurance. |
-| Micro-USB OTG adapter (micro-USB male to USB-A female) | $6 | The OBDLink EX plugs into this, and this into the Pi's **USB** port (the inner one, not "PWR"). |
-| USB car charger (2.4 A or more) + short micro-USB cable | $12 | Plugs into the power board's USB input, not the Pi. Use a 12 V outlet that goes **off with the key**. |
+| Micro-USB OTG adapter (micro-USB male to USB-A female) | $6 | **Zero 2 W only.** The OBDLink EX plugs into this, and this into the Pi's **USB** port (the inner one, not "PWR"). On the 3 A+ the OBDLink plugs straight into its USB port. |
+| USB car charger (2.4 A or more) + short micro-USB cable | $12 | Plugs into the power board's USB input, **never the Pi's own power socket** (the board feeds the Pi through the pin header). Use a 12 V outlet that goes **off with the key**. |
 | Small case or Velcro | $5–10 | |
+
+Either Pi runs the same software. The 3 A+ uses more power (about 2.5 W against 1 W),
+which makes no difference here: the car charger supplies it while driving, and the
+battery only has to carry it for a few minutes after the key is off. It is also a bit
+bigger (65 x 56 mm, about the size of a playing card cut short).
 
 ## Why it won't corrupt the SD card
 
@@ -42,7 +47,7 @@ app's **In-Jeep logger** tab lists them.
 ### 1. Prepare the SD card on your PC
 
 1. Install **Raspberry Pi Imager** from raspberrypi.com/software and open it.
-2. **Device:** Raspberry Pi Zero 2 W. **Operating system:** Raspberry Pi OS (other)
+2. **Device:** Raspberry Pi 3 (for the 3 A+) or Raspberry Pi Zero 2 W. **Operating system:** Raspberry Pi OS (other)
    → **Raspberry Pi OS Lite (64-bit)**. **Storage:** the SD card.
 3. Press **Next**, then **Edit settings** (or "Customise", depending on the version):
    - Hostname: `wrangler-pi`
@@ -73,7 +78,7 @@ router's list of devices (for example `192.168.1.57`) and type that instead.
 
 ### 4. In the Jeep
 
-1. Plug the OBDLink EX into the truck's port and into the OTG adapter on the Pi.
+1. Plug the OBDLink EX into the truck's port and into the Pi's USB port (on a Zero 2 W, through the OTG adapter).
 2. Plug the car charger into a 12 V outlet that turns off with the key. Connect it to the power board.
 3. Tuck the Pi somewhere it won't get stepped on. Under or behind the dash beats the
    top of the dashboard in the sun.
