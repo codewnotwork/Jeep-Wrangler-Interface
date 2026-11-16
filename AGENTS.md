@@ -129,3 +129,12 @@ split by speed band. Before comparing anything:
 
 See "Layout" in `README.md`. Tests: `pip install -e .[dev]` then `pytest -q`. Every feature
 must work against the simulator (`--sim`) so it can be tested without the truck.
+
+## Drives from the in-Jeep Pi
+
+Folders named `<date> <time> jeep drive` in `Documents/jeep-data` were recorded by the
+Raspberry Pi logger (see `docs/raspberry-pi.md`), not by the laptop. Read them like any
+other recording: `report.md`, then `report.json`. `pi-drive.json` says why the recording
+ended. `"recovered": true` means power was cut mid-drive, so the report was built from
+the log alone, without codes, readiness or a vehicle snapshot.
+

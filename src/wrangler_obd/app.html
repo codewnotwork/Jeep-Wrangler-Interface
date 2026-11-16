@@ -120,6 +120,15 @@
   .ok { color: var(--accent); } .bad { color: var(--bad); }
   footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 30px; font-size: 14px; color: var(--muted);
            display: flex; gap: 16px; flex-wrap: wrap; }
+  .pi { max-width: 1100px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+  .pi .fields { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 10px 0; }
+  .pi .fields label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+  .pi table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .pi td, .pi th { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); }
+  .pi th { color: var(--muted); font-weight: 600; border-top: 0; }
+  .pi ol { margin: 6px 0 10px; padding-left: 22px; color: var(--muted); }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.on { background: var(--accent); }
 </style>
 </head>
 <body>
@@ -150,6 +159,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" id="tab-dash" class="tab on" data-tab="dash">Dashboard</button>
     <button role="tab" id="tab-steps" class="tab" data-tab="steps">Guided steps</button>
+    <button role="tab" id="tab-pi" class="tab" data-tab="pi">In-Jeep logger</button>
   </nav>
 </div>
 
@@ -276,6 +286,47 @@
   </aside>
 </main>
 
+<div id="panel-pi" class="pi" hidden>
+  <section class="card">
+    <h2>Drive receiver on this PC</h2>
+    <p>Accepts drives from the Pi over your home WiFi. It runs quietly in the background, so this app doesn't need to be open.</p>
+    <div class="row"><span id="rcv-status"><span class="dot"></span>Checking…</span><button id="rcv-start" hidden>Start it now</button></div>
+    <div class="row" style="margin-top:8px" id="rcv-auto-row"><label><input type="checkbox" id="rcv-auto"> Start the receiver when Windows starts</label></div>
+    <p style="margin-top:10px">If Windows asks whether to allow Python on your network, click <b>Allow</b> (private networks). That lets the Pi reach this PC.</p>
+  </section>
+
+  <section class="card">
+    <h2>The Pi in the Jeep</h2>
+    <div id="pi-status" class="muted">The Pi hasn't checked in yet. It does whenever it's on and your home WiFi is in range.</div>
+  </section>
+
+  <section class="card">
+    <h2>Set up the Pi</h2>
+    <ol>
+      <li>Prepare the SD card with <b>Raspberry Pi Imager</b> as described in the setup guide (name <b>wrangler-pi</b>, your WiFi, SSH turned on).</li>
+      <li>Put the card in the Pi and power it from any USB charger here at home. Wait 3 minutes.</li>
+      <li>Fill in the user name and password you chose in Imager, then press Install. It takes 5 to 15 minutes, and the Pi restarts at the end.</li>
+    </ol>
+    <div class="fields">
+      <label>Pi's name <input id="pi-host" value="wrangler-pi.local"></label>
+      <label>User name <input id="pi-user" autocomplete="off"></label>
+      <label>Password <input id="pi-pass" type="password" autocomplete="off"></label>
+      <label>Power board <select id="pi-power"><option value="lifepo4wered">LiFePO4wered/Pi+</option><option value="none">None (just a USB charger)</option></select></label>
+    </div>
+    <div class="row"><button class="primary" id="pi-install">Install on Pi</button><span class="muted">Run it again any time to update the Pi to this app's version.</span></div>
+    <div class="error" id="pi-err"></div>
+    <div id="pi-job" hidden>
+      <div class="times" style="margin-top:10px"><span id="pi-job-state"></span></div>
+      <pre class="log" id="pi-log"></pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Drives from the Pi</h2>
+    <div id="pi-drives" class="muted">None yet.</div>
+  </section>
+</div>
+
 <footer>
   <span>Other tools:</span>
   <button class="link" data-step="codes">Read trouble codes</button>
@@ -354,6 +405,7 @@ function render() {
     $("trans-scans").hidden = true;
   }
   $("datadir").textContent = `Saved in ${state.data_dir}`;
+  renderPiJob();
 
   const job = state.job;
   $("job-idle").hidden = !!job; $("job-box").hidden = !job;
@@ -428,11 +480,12 @@ let mon = { catalog: [], samples: [], markers: [], since: -1, folder: null, runn
 let tiles = null, windowS = 300, dragKey = null, layoutLoaded = false;
 
 function showTab(name) {
-  for (const t of ["dash", "steps"]) {
+  for (const t of ["dash", "steps", "pi"]) {
     $("panel-" + t).hidden = t !== name;
     $("tab-" + t).classList.toggle("on", t === name);
   }
   try { localStorage.setItem("tab", name); } catch (e) {}
+  if (name === "pi") pollPi();
 }
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
@@ -662,6 +715,73 @@ $("tire-save").onclick = async () => {
     $("tire-msg").textContent = "Saved. Applies to the next recording."; $("tire-msg").className = "ok";
   } catch (e) { $("tire-msg").textContent = e.message; $("tire-msg").className = "bad"; }
 };
+// ---- In-Jeep logger -------------------------------------------------------
+function ago(epoch, now) {
+  const s = Math.max(0, now - epoch);
+  if (s < 90) return "just now";
+  if (s < 5400) return `${Math.round(s / 60)} minutes ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} hours ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+function esc(t) { return String(t ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+async function pollPi() {
+  if ($("panel-pi").hidden) return;
+  const r = await api("/api/pi").catch(() => null);
+  if (!r) return;
+  $("rcv-status").innerHTML = r.receiver_running
+    ? `<span class="dot on"></span>Running${r.addresses.length ? ` on ${esc(r.addresses.join(", "))}` : ""}`
+    : `<span class="dot"></span>Not running`;
+  $("rcv-start").hidden = r.receiver_running;
+  $("rcv-auto-row").hidden = !r.autostart_supported;
+  $("rcv-auto").checked = r.autostart;
+  const s = r.status || {};
+  if (s.heard_at) {
+    const bits = [`Last checked in <b>${ago(s.heard_at, r.now)}</b>`];
+    if (s.state) bits.push(`it was ${esc(s.state)}`);
+    bits.push(`${s.drives_waiting ?? 0} drive${s.drives_waiting === 1 ? "" : "s"} waiting to be sent`);
+    if (s.board_battery_mv) bits.push(`power board battery ${(s.board_battery_mv / 1000).toFixed(2)} V`);
+    if (s.free_mb) bits.push(`${(s.free_mb / 1000).toFixed(1)} GB free on its card`);
+    if (s.logger_version) bits.push(`logger ${esc(s.logger_version)}`);
+    $("pi-status").innerHTML = bits.join(" · ");
+    $("pi-status").className = "";
+  }
+  if (r.drives.length) {
+    const rows = r.drives.map(d => `<tr><td>${esc(d.folder.replace(/ jeep drive.*$/, ""))}</td>
+      <td>${d.duration_s ? fmt(d.duration_s) : ""}</td><td>${d.mpg ? `about ${d.mpg} mpg` : ""}</td>
+      <td>${d.findings} finding${d.findings === 1 ? "" : "s"}${d.recovered ? " · <span class='muted'>saved after a power cut</span>" : ""}</td>
+      <td>${d.has_report ? `<button class="link" data-view="${esc(d.folder)}">View report</button> · ` : ""}<button class="link" data-open="${esc(d.folder)}">Open folder</button></td></tr>`);
+    $("pi-drives").innerHTML = `<table><tr><th>Started</th><th>Length</th><th>Fuel</th><th>Report</th><th></th></tr>${rows.join("")}</table>`;
+    $("pi-drives").className = "";
+    $("pi-drives").querySelectorAll("[data-view]").forEach(b => b.onclick = () => window.open(`/view?f=${encodeURIComponent(b.dataset.view + "/report.md")}`, "_blank"));
+    $("pi-drives").querySelectorAll("[data-open]").forEach(b => b.onclick = () => api("/api/open", { folder: b.dataset.open }));
+  }
+}
+function renderPiJob() {
+  const job = state && state.job;
+  const mine = job && job.step === "pi-install";
+  $("pi-job").hidden = !mine;
+  $("pi-install").disabled = !!(job && job.running) || !!(state && state.monitoring);
+  if (!mine) return;
+  $("pi-job-state").textContent = job.running ? `Installing… ${fmt(job.elapsed)}` : (job.ok ? "Finished" : "Did not finish");
+  $("pi-job-state").className = job.running ? "" : (job.ok ? "ok" : "bad");
+  const log = $("pi-log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.textContent = job.log.join("\n");
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+$("pi-install").onclick = async () => {
+  $("pi-err").textContent = "";
+  try {
+    await api("/api/pi/install", { host: $("pi-host").value, user: $("pi-user").value, password: $("pi-pass").value, power: $("pi-power").value });
+    try { localStorage.setItem("pi-user", $("pi-user").value); localStorage.setItem("pi-host", $("pi-host").value); localStorage.setItem("pi-power", $("pi-power").value); } catch (e) {}
+  } catch (e) { $("pi-err").textContent = e.message; }
+  poll();
+};
+$("rcv-start").onclick = () => api("/api/pi/receiver", {}).then(() => setTimeout(pollPi, 1500)).catch(e => { $("pi-err").textContent = e.message; });
+$("rcv-auto").onchange = () => api("/api/pi/autostart", { on: $("rcv-auto").checked }).then(() => setTimeout(pollPi, 1500)).catch(e => { $("pi-err").textContent = e.message; });
+try {
+  for (const k of ["pi-user", "pi-host", "pi-power"]) { const v = localStorage.getItem(k); if (v) $(k).value = v; }
+} catch (e) {}
+setInterval(pollPi, 5000);
 $("mon-view").onclick = () => window.open(`/view?f=${encodeURIComponent(mon.folder + "/report.md")}`, "_blank");
 $("mon-open").onclick = () => api("/api/open", { folder: mon.folder });
 

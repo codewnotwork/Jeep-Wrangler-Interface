@@ -23,7 +23,7 @@ wrangler-app = "wrangler_obd.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-wrangler_obd = ["app.html"]
+wrangler_obd = ["app.html", "pi/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

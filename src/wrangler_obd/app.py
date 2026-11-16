@@ -26,7 +26,7 @@ from importlib import resources
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import cli, economy, updater
+from . import cli, economy, pisetup, receiver, updater
 from .elm327 import Elm327, ElmError
 from .monitor import Monitor
 from .simulator import SimulatedTransport
@@ -393,6 +393,57 @@ class App:
             return None
         return any(x["key"].startswith("trans_temp") for x in data.get("manufacturer_readings", []))
 
+    # -- in-Jeep logger (Raspberry Pi) -------------------------------------------
+
+    def pi_state(self) -> dict:
+        return {
+            "receiver_running": receiver.is_running(self.data_dir),
+            "paired": (self.data_dir / receiver.PAIRING_FILE).exists(),
+            "autostart": autostart_enabled(),
+            "autostart_supported": platform.system() == "Windows",
+            "status": receiver.status(self.data_dir),
+            "drives": receiver.received_drives(self.data_dir),
+            "addresses": pisetup.local_addresses(),
+            "now": time.time(),
+        }
+
+    def start_receiver(self) -> None:
+        """Start the drive receiver in the background, unless it is already running."""
+        if not receiver.is_running(self.data_dir):
+            launch_receiver()
+
+    def start_pi_install(self, body: dict) -> None:
+        if self.busy():
+            raise RuntimeError("Stop the recording or step first.")
+        host = str(body.get("host") or "").strip()
+        user = str(body.get("user") or "").strip()
+        password = str(body.get("password") or "")
+        power = str(body.get("power") or "lifepo4wered")
+        if not host or not user or not password:
+            raise ValueError("Fill in the Pi's name, user name and password.")
+        job = Job("pi-install", "Install the in-Jeep logger on the Pi", None, None)
+        self.job = job
+        settings, factor = self.settings(), self.speed_factor()
+        receiver.pairing_token(self.data_dir)  # create the pairing code before the receiver starts
+
+        def run() -> None:
+            writer = _LogWriter(job)
+            echo = lambda line: writer.write(line + "\n")  # noqa: E731
+            try:
+                self.start_receiver()
+                pisetup.install(host, user, password, power, self.data_dir, settings, factor, echo=echo)
+                job.ok = True
+            except pisetup.SetupError as exc:
+                echo(f"\nCould not finish: {exc}.")
+                job.ok = False
+            except Exception as exc:  # show anything unexpected instead of failing silently
+                echo(f"\nSomething went wrong: {exc!r}")
+                job.ok = False
+            finally:
+                job.finished = time.time()
+
+        threading.Thread(target=run, daemon=True).start()
+
     # -- files ---------------------------------------------------------------
 
     def make_zip(self) -> Path:
@@ -463,6 +514,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(self.app.version())
         if url.path == "/api/live":
             return self._json(self.app.live())
+        if url.path == "/api/pi":
+            return self._json(self.app.pi_state())
         if url.path == "/view":
             # Show a saved report as text. Only files inside the data folder.
             rel = parse_qs(url.query).get("f", [""])[0]
@@ -508,6 +561,14 @@ class Handler(BaseHTTPRequestHandler):
                 app.save_layout(body)
             elif path == "/api/stop":
                 app.stop()
+            elif path == "/api/pi/install":
+                app.start_pi_install(body)
+            elif path == "/api/pi/receiver":
+                app.start_receiver()
+            elif path == "/api/pi/autostart":
+                set_autostart(bool(body.get("on")))
+                if body.get("on"):
+                    app.start_receiver()
             elif path == "/api/zip":
                 z = app.make_zip()
                 try:
@@ -529,6 +590,59 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"Could not talk to the adapter: {exc}"}, 400)
         except (RuntimeError, ValueError) as exc:
             self._json({"error": str(exc)}, 400)
+
+
+SRC_DIR = Path(__file__).resolve().parents[1]
+AUTOSTART_NAME = "Wrangler drive receiver.pyw"
+
+
+def _pythonw() -> str:
+    """The windowless Python on Windows, so the receiver runs without a console window."""
+    exe = Path(sys.executable)
+    quiet = exe.with_name("pythonw.exe")
+    return str(quiet if platform.system() == "Windows" and quiet.exists() else exe)
+
+
+def launch_receiver() -> None:
+    env = {**os.environ, "PYTHONPATH": str(SRC_DIR) + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    kwargs: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "env": env}
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = 0x00000008 | 0x08000000  # DETACHED_PROCESS | CREATE_NO_WINDOW
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen([_pythonw(), "-m", "wrangler_obd.receiver"], **kwargs)
+
+
+def _startup_folder() -> Path | None:
+    appdata = os.environ.get("APPDATA")
+    if platform.system() != "Windows" or not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def autostart_enabled() -> bool:
+    folder = _startup_folder()
+    return bool(folder and (folder / AUTOSTART_NAME).exists())
+
+
+def set_autostart(on: bool) -> None:
+    """Start the drive receiver with Windows, via a small file in the Startup folder."""
+    folder = _startup_folder()
+    if folder is None:
+        raise RuntimeError("Starting with the computer is only set up for Windows.")
+    target = folder / AUTOSTART_NAME
+    if not on:
+        target.unlink(missing_ok=True)
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        '"""Starts the Wrangler drive receiver, which accepts drives from the in-Jeep Pi."""\n'
+        "import sys\n"
+        f"sys.path.insert(0, {str(SRC_DIR)!r})\n"
+        "from wrangler_obd.receiver import main\n"
+        "main()\n",
+        encoding="utf-8",
+    )
 
 
 def serve(app: App, port: int = 8765) -> ThreadingHTTPServer:
@@ -553,6 +667,11 @@ def main(argv: list[str] | None = None) -> int:
     no_browser = "--no-browser" in (argv or sys.argv[1:])
     app = App()
     server = serve(app)
+    if (app.data_dir / receiver.PAIRING_FILE).exists():
+        try:
+            app.start_receiver()  # the Pi has been set up: make sure its drives can arrive
+        except Exception:
+            pass
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     threading.Thread(target=_watchdog, args=(app, server), daemon=True).start()
     if not no_browser:
