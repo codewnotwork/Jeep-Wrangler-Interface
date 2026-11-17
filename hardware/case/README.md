@@ -9,16 +9,25 @@ with the OBDLink EX plugged into one of the Pi's USB-A ports.
 | `base.stl` | Tub that holds the Pi. Prints upright, no supports. |
 | `lid.stl` | Vented lid. Print it top-face down (lip pointing up), no supports. |
 | `wrangler-logger-case.scad` | OpenSCAD source. Every size is a named setting at the top. |
-| `preview-*.png` | Renders of the assembly, the print layout, and both ends. |
+| `preview-*.png` | Renders of the assembly, the underside and the print layout. |
 
-Outside size: about 92 x 99 x 32 mm (115 mm long including the mounting flanges).
+Outside size: about 92 x 99 x 37 mm (115 mm long including the mounting flanges).
 
-## Material
+## Material (Bambu A1)
 
-Use **ASA** (best) or **PETG**. A closed Jeep in the sun gets well past the
-point where PLA softens (about 55 °C), and the case would sag or warp.
-PETG is fine under a seat or in a console out of direct sun. ASA holds up
-on or near the dash. Print with 3 walls, 20 % infill, 0.2 mm layers.
+Print it in **PETG** (for example Bambu PETG HF, using the printer's
+built-in PETG profile). The A1 prints PETG well without an enclosure.
+
+PLA is fine for a quick **test-fit print**, but not for the one that lives
+in the Jeep. A closed Jeep in summer gets hot enough under the dash to soften
+PLA (around 55-60 °C). The zip ties keep pulling on the case and the
+standoffs carry the Pi, so PLA would slowly sag and loosen. ASA holds up even
+better, but it warps on an open-frame printer like the A1, so PETG is the
+right choice there.
+
+Slicer: 0.2 mm layers, 3 walls, 20 % gyroid infill, no supports.
+The base prints upright on its zip-tie loops. Flip the lid so its top face
+is on the plate (Bambu Studio: "Lay on face").
 
 ## Hardware
 
@@ -28,8 +37,11 @@ on or near the dash. Print with 3 walls, 20 % infill, 0.2 mm layers.
   M2.5 screws and nuts. Those nuts drop into the hex pockets on top of the
   two wider standoffs, so no extra screws there.
 * 4 x M3 x 8 mm self-tapping screws to hold the lid on (through the four ears).
-* Mounting: either Velcro / 3M Dual Lock on the flat bottom, or #8 / M4
-  screws or zip ties through the slots in the two end flanges.
+* Mounting (default: zip-tied under the dash): four loops under the floor
+  form two strap paths across the case, for zip ties up to 5 mm wide. Run
+  ties through them and around a dash bracket or a sturdy harness bundle.
+  The two end flanges also take zip ties or #8 / M4 screws. For a flat
+  bottom for Velcro instead, set `tie_loops = false` and re-export.
 
 ## Heat sinks
 

@@ -68,8 +68,20 @@ flange_t   = 3;
 slot_d     = 4.6;    // fits #8 or M4 screws, or 4.8 mm zip ties
 slot_len   = 7;
 
+// Zip-tie loops under the floor, for strapping the case to a dash bracket
+// or harness. Two strap paths run across the case (along Y). Set false for a
+// flat bottom (Velcro).
+tie_loops = true;
+tie_x     = [18, 68];      // strap paths
+tie_y     = [10, 66];      // loop positions along each path
+tie_w     = 6.0;           // tunnel width (ties up to 5 mm wide)
+tie_h     = 2.4;           // tunnel height
+loop_h    = 4.6;           // loop height below the floor
+loop_len  = 12;
+
 // Lid screw ears on the long sides: M3 (self-tapping into base)
 ear_x = [12, 72];
+case_bot = -floor_t - (tie_loops ? loop_h : 0);   // bottom of the print
 ear_w = 10; ear_d = 7; ear_h = 8;
 
 /* ================================================================ */
@@ -90,9 +102,13 @@ module base(){
             for (side=[0,1]){
                 fx = side==0 ? out_x0-flange_len : out_x1;
                 cy = (out_y0+out_y1)/2;
-                translate([fx - (side==0?0:corner_r), cy-flange_w/2, -floor_t])
-                    rrect(0,0,flange_len+corner_r,flange_w,flange_t,2);
+                translate([fx - (side==0?0:corner_r), cy-flange_w/2, case_bot])
+                    rrect(0,0,flange_len+corner_r,flange_w,flange_t-floor_t-case_bot,2);
             }
+            // zip-tie loops
+            if (tie_loops) for (x=tie_x, y=tie_y)
+                translate([x-(tie_w+5)/2, y, -floor_t-loop_h])
+                    cube([tie_w+5, loop_len, loop_h+0.01]);
             // lid screw ears
             for (x=ear_x, s=[0,1]){
                 y = s==0 ? out_y0-ear_d : out_y1;
@@ -110,9 +126,13 @@ module base(){
         for (side=[0,1]){
             fx = side==0 ? out_x0-flange_len/2-1 : out_x1+flange_len/2+1;
             for (dy=[-flange_w/2+7, flange_w/2-7])
-                translate([fx,(out_y0+out_y1)/2+dy,-floor_t-1])
-                    linear_extrude(flange_t+2) rotate(90) slot2d(slot_len,slot_d);
+                translate([fx,(out_y0+out_y1)/2+dy,case_bot-1])
+                    linear_extrude(flange_t-floor_t-case_bot+2) rotate(90) slot2d(slot_len,slot_d);
         }
+        // zip-tie tunnels
+        if (tie_loops) for (x=tie_x)
+            translate([x-tie_w/2, out_y0-1, -floor_t-tie_h])
+                cube([tie_w, out_y1-out_y0+2, tie_h]);
         // ear pilot holes (M3 self-tap)
         for (x=ear_x, s=[0,1]){
             y = s==0 ? out_y0-ear_d/2 : out_y1+ear_d/2;
